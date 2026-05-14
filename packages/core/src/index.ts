@@ -25,9 +25,13 @@ export {
 
 export {
   TrainException,
+  TrainErrorCode,
+  trainError,
   TrainReturnSignal,
   TrainBreakSignal,
   TrainContinueSignal,
+  type TrainErrorCodeKey,
+  type TrainErrorCodeValue,
   type Value,
   type FunctionValue,
   type BuiltinFunction,
@@ -113,3 +117,38 @@ export {
   isPromptType,
   describeType,
 } from './type-descriptor.js'
+
+export {
+  AST_CACHE_VERSION,
+  sourceHash,
+  cacheFilePath,
+  saveCache,
+  loadCache,
+  normalizeForCache,
+  parseWithCache,
+  type AstCacheRecord,
+  type ParseWithCacheResult,
+} from './ast-cache.js'
+
+export {
+  createModuleRegistry,
+  applyImport,
+  collectExports,
+  type ModuleInstance,
+  type ModuleLoaderHooks,
+  type ModuleRegistry,
+} from './module-loader.js'
+
+/**
+ * runSource for a file on disk. Required when the source uses
+ * `import` statements so module resolution works. Equivalent to:
+ *   runSource(await fs.readFile(file), { ...opts, entryFile: file })
+ */
+export async function runFile(
+  absFilePath: string,
+  opts: import('./interpreter.js').RunOptions = {},
+): Promise<RunSourceResult> {
+  const fs = await import('node:fs/promises')
+  const source = await fs.readFile(absFilePath, 'utf8')
+  return runSource(source, { ...opts, entryFile: absFilePath })
+}

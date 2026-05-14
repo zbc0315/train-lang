@@ -30,6 +30,14 @@ export interface FunctionValue {
   readonly decl: ast.FuncDecl | ast.FaiDecl
   /** The lexical scope where the function was defined. */
   readonly definedIn: Scope
+  /**
+   * The module-level RuntimeContext this function was defined in. The
+   * interpreter swaps to this context on entry so identifier lookup
+   * resolves against the function's own module (E0xx M5 module
+   * isolation). Optional for backward compat — bindings created before
+   * M5 share the caller's context.
+   */
+  readonly moduleCtx?: RuntimeContext
 }
 
 export function isFunctionValue(v: Value): v is FunctionValue {
@@ -124,20 +132,98 @@ export class TrainContinueSignal {}
 // ─── User-visible runtime exceptions ──────────────────────────────────
 
 /**
+ * Stable error code registry. Every TrainException SHOULD carry one of
+ * these codes; the codes are reviewed and documented in
+ * `docs/error-codes.md`. The lint script
+ * `scripts/check-error-codes.ts` verifies code/docs consistency.
+ *
+ * Conventions:
+ *   E01xx — lex errors
+ *   E02xx — parse errors
+ *   E03xx — type / declaration errors
+ *   E04xx — runtime evaluation errors
+ *   E05xx — module loader errors
+ *   E06xx — fai / adapter errors
+ *   E07xx — validation errors
+ *   E08xx — i/o + state-dir + cache errors
+ *   E99xx — uncoded (legacy throws — to be migrated)
+ */
+export const TrainErrorCode = {
+  // Module loader (M5)
+  CircularImport: 'E0501',
+  ModuleNotFound: 'E0502',
+  VersionMismatch: 'E0503',
+  ImportSymbolMissing: 'E0504',
+  ExportConflict: 'E0505',
+
+  // Fai / adapter
+  AdapterMissing: 'E0601',
+  AdapterTimeout: 'E0602',
+  AdapterError: 'E0603',
+  RetryExhausted: 'E0604',
+
+  // Validation
+  ValidationFailed: 'E0701',
+  OutputShapeMismatch: 'E0702',
+  EnumOutOfRange: 'E0703',
+
+  // I/O + state
+  StateDirNotWritable: 'E0801',
+  AstCacheCorrupt: 'E0802',
+
+  // Legacy / unclassified (migrate over time)
+  Uncoded: 'E9999',
+} as const
+
+export type TrainErrorCodeKey = keyof typeof TrainErrorCode
+export type TrainErrorCodeValue = typeof TrainErrorCode[TrainErrorCodeKey]
+
+/**
  * A train-level exception. Surfaces as catchable RuntimeError /
  * ValidationError / etc in try-catch. JS Error subclass so it can be
  * thrown / caught natively, but the `errorType` carries the train
  * exception class name visible in `catch X as e`.
+ *
+ * NEW (v0.2): `code` is now part of the public shape. Legacy throws
+ * that don't pass a code default to TrainErrorCode.Uncoded so the
+ * runtime invariant "every TrainException has a code" holds without
+ * forcing a single-shot rewrite of all 53 existing throw sites.
  */
 export class TrainException extends Error {
   override readonly name = 'TrainException'
+  public readonly code: TrainErrorCodeValue
   constructor(
     public readonly errorType: string,
     message: string,
     public readonly range?: ast.Range,
+    code: TrainErrorCodeValue = TrainErrorCode.Uncoded,
   ) {
     super(message)
+    this.code = code
   }
+}
+
+/** Helper for new code: throw with explicit code, errorType inferred. */
+export function trainError(
+  code: TrainErrorCodeValue,
+  message: string,
+  range?: ast.Range,
+): TrainException {
+  // Map code prefix to errorType bucket (purely cosmetic for `catch X as e`).
+  const errorType = errorTypeFromCode(code)
+  return new TrainException(errorType, message, range, code)
+}
+
+function errorTypeFromCode(code: string): string {
+  if (code.startsWith('E01')) return 'LexError'
+  if (code.startsWith('E02')) return 'ParseError'
+  if (code.startsWith('E03')) return 'TypeError'
+  if (code.startsWith('E04')) return 'RuntimeError'
+  if (code.startsWith('E05')) return 'ModuleError'
+  if (code.startsWith('E06')) return 'AdapterError'
+  if (code.startsWith('E07')) return 'ValidationError'
+  if (code.startsWith('E08')) return 'IOError'
+  return 'RuntimeError'
 }
 
 /** Programmer error inside the interpreter itself (e.g. unimplemented). */

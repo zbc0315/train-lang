@@ -1,0 +1,10 @@
+// Calls fai without --adapter → expected RuntimeError at runtime.
+
+fai ask(prompt: prompt) -> answer: string { }
+
+func main() -> string {
+  let r = ask("hello")
+  return r.answer
+}
+
+export main

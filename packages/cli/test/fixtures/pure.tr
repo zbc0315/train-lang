@@ -1,0 +1,11 @@
+// Pure computation, no fai. Used for adapter-less CLI smoke tests.
+
+func add(a: int, b: int) -> int {
+  return a + b
+}
+
+func main() -> int {
+  return add(2, 3)
+}
+
+export main

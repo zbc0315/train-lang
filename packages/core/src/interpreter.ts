@@ -40,6 +40,14 @@ import type { LLMAdapter, FaiCall } from '@train-lang/adapter-spec'
 import { composePrompt } from './prompt-composer.js'
 import { composeRetryFeedback, validateOutputs } from './validation.js'
 
+import {
+  type ModuleRegistry,
+  applyImport,
+  collectExports,
+  createModuleRegistry,
+} from './module-loader.js'
+import { TrainErrorCode } from './runtime.js'
+
 export interface RunResult {
   ok: boolean
   value: Value | null
@@ -64,6 +72,9 @@ export class Interpreter {
   private readonly model?: string
 
   constructor(private ctx: RuntimeContext, cfg: InterpreterConfig = {}) {
+    // ctx is intentionally mutable (private but not readonly) so that
+    // cross-module calls can swap to the callee's module ctx and
+    // restore on exit. See callFunc/callFai entry.
     this.adapter = cfg.adapter
     this.maxFaiAttempts = cfg.maxFaiAttempts ?? 3
     this.defaultFaiTimeoutMs = cfg.defaultFaiTimeoutMs ?? 600_000
@@ -343,11 +354,15 @@ export class Interpreter {
     }
     const callScope = newScope(fn.definedIn)
     decl.params.forEach((p, i) => callScope.bindings.set(p.name, args[i]!))
+    const prevCtx = this.ctx
+    if (fn.moduleCtx && fn.moduleCtx !== this.ctx) this.ctx = fn.moduleCtx
     try {
       await this.execBlock(decl.body, callScope)
     } catch (e) {
       if (e instanceof TrainReturnSignal) return e.value ?? null
       throw e
+    } finally {
+      this.ctx = prevCtx
     }
     return null
   }
@@ -820,6 +835,19 @@ export interface RunOptions extends InterpreterConfig {
   entry?: string
   args?: Value[]
   extraBuiltins?: Map<string, Value>
+  /**
+   * Absolute path of the entry .tr file. Required when the program
+   * contains `import` statements so submodule paths can be resolved.
+   * Default: no module support (imports throw).
+   */
+  entryFile?: string
+  /**
+   * Shared module registry. Reused across submodules in one run so the
+   * cache hits and circular detection work. Default: a fresh registry.
+   */
+  moduleRegistry?: ModuleRegistry
+  /** Internal: importer stack (used by recursive submodule execution). */
+  __importerStack?: string[]
 }
 
 export async function runProgram(
@@ -845,13 +873,26 @@ export async function runProgram(
   const interp = new Interpreter(ctx, opts)
   const rootScope = newScope(null)
 
+  const moduleRegistry = opts.moduleRegistry ?? createModuleRegistry()
+  const entryFile = opts.entryFile
+  const importerStack = opts.__importerStack ?? (entryFile ? [entryFile] : [])
+
   for (const item of program.items) {
     registerTopLevelFunctions(item, ctx, rootScope)
   }
 
   try {
     for (const item of program.items) {
-      await evalTopLevelItem(item, interp, ctx, rootScope)
+      await evalTopLevelItem(
+        item,
+        interp,
+        ctx,
+        rootScope,
+        moduleRegistry,
+        entryFile,
+        importerStack,
+        opts,
+      )
     }
   } catch (e) {
     if (e instanceof TrainException) return { ok: false, value: null, error: e }
@@ -917,6 +958,7 @@ function registerTopLevelFunctions(
       isFai: item.kind === 'FaiDecl',
       decl: item,
       definedIn: rootScope,
+      moduleCtx: ctx,
     })
     return
   }
@@ -929,6 +971,7 @@ function registerTopLevelFunctions(
         isFai: tgt.kind === 'FaiDecl',
         decl: tgt,
         definedIn: rootScope,
+        moduleCtx: ctx,
       })
     }
   }
@@ -939,9 +982,22 @@ async function evalTopLevelItem(
   interp: Interpreter,
   ctx: RuntimeContext,
   rootScope: Scope,
+  moduleRegistry: ModuleRegistry,
+  currentFile: string | undefined,
+  importerStack: string[],
+  opts: RunOptions,
 ): Promise<void> {
   switch (item.kind) {
     case 'Import':
+      await handleImport(
+        item,
+        ctx,
+        moduleRegistry,
+        currentFile,
+        importerStack,
+        opts,
+      )
+      return
     case 'RuntimeAnnotation':
       return
     case 'ConstDecl':
@@ -960,6 +1016,150 @@ async function evalTopLevelItem(
       registerExports(item, ctx)
       return
   }
+}
+
+async function handleImport(
+  imp: ast.Import,
+  importerCtx: RuntimeContext,
+  registry: ModuleRegistry,
+  currentFile: string | undefined,
+  importerStack: string[],
+  rootOpts: RunOptions,
+): Promise<void> {
+  if (!currentFile) {
+    throw new TrainException(
+      'ModuleError',
+      `import statement requires entryFile to be set on runProgram (no current module path)`,
+      imp.range,
+      TrainErrorCode.ModuleNotFound,
+    )
+  }
+  const absPath = registry.resolve(imp.source, currentFile)
+  // cache hit
+  if (registry.hasCached(absPath)) {
+    applyImport(imp, registry.getCached(absPath)!, importerCtx)
+    return
+  }
+  // cycle detection
+  if (registry.isInProgress(absPath)) {
+    const cycle = [...importerStack, absPath]
+      .map((p) => p.split('/').pop())
+      .join(' → ')
+    throw new TrainException(
+      'ModuleError',
+      `circular import: ${cycle}`,
+      imp.range,
+      TrainErrorCode.CircularImport,
+    )
+  }
+  registry.markInProgress(absPath)
+  try {
+    const childSource = await registry.read(absPath)
+    const { parse } = await import('./parser.js')
+    const { buildAst } = await import('./builder.js')
+    const parseResult = parse(childSource)
+    if (parseResult.lexErrors.length > 0 || parseResult.parseErrors.length > 0) {
+      throw new TrainException(
+        'ModuleError',
+        `module "${imp.source}" has parse errors (${parseResult.lexErrors.length + parseResult.parseErrors.length})`,
+        imp.range,
+        TrainErrorCode.ModuleNotFound,
+      )
+    }
+    const childAst = buildAst(parseResult.cst!)
+    if (!childAst) {
+      throw new TrainException(
+        'ModuleError',
+        `module "${imp.source}" failed to build AST`,
+        imp.range,
+        TrainErrorCode.ModuleNotFound,
+      )
+    }
+    // Recurse: run the child module's top-level via runProgram, but in
+    // "submodule mode" — no entry call, no result; we only want its ctx.
+    const childResult = await runSubmodule(childAst, {
+      ...rootOpts,
+      entryFile: absPath,
+      moduleRegistry: registry,
+      __importerStack: [...importerStack, absPath],
+    })
+    if (!childResult.ok) {
+      throw (
+        childResult.error ??
+        new TrainException(
+          'ModuleError',
+          `module "${imp.source}" failed to evaluate`,
+          imp.range,
+          TrainErrorCode.ModuleNotFound,
+        )
+      )
+    }
+    registry.set(absPath, {
+      absPath,
+      ctx: childResult.ctx,
+      exports: collectExports(childResult.ctx),
+    })
+    applyImport(imp, registry.getCached(absPath)!, importerCtx)
+  } finally {
+    registry.unmarkInProgress(absPath)
+  }
+}
+
+interface SubmoduleResult {
+  ok: boolean
+  error?: TrainException
+  ctx: RuntimeContext
+}
+
+/**
+ * Execute a child module's top-level without calling its entry. Returns
+ * the populated RuntimeContext for export collection.
+ */
+async function runSubmodule(
+  program: ast.Program,
+  opts: RunOptions,
+): Promise<SubmoduleResult> {
+  const ctx: RuntimeContext = {
+    constants: new Map(),
+    globals: new Map(),
+    functions: new Map(),
+    builtins: new Map(),
+    exports: new Map(),
+  }
+  for (const [k, v] of defaultBuiltinBindings()) {
+    ctx.builtins.set(k, v as unknown as BuiltinFunction)
+  }
+  if (opts.extraBuiltins) {
+    for (const [k, v] of opts.extraBuiltins) {
+      ctx.builtins.set(k, v as unknown as BuiltinFunction)
+    }
+  }
+  const interp = new Interpreter(ctx, opts)
+  const rootScope = newScope(null)
+  const registry = opts.moduleRegistry!
+  const importerStack = opts.__importerStack!
+
+  for (const item of program.items) {
+    registerTopLevelFunctions(item, ctx, rootScope)
+  }
+  try {
+    for (const item of program.items) {
+      await evalTopLevelItem(
+        item,
+        interp,
+        ctx,
+        rootScope,
+        registry,
+        opts.entryFile,
+        importerStack,
+        opts,
+      )
+    }
+  } catch (e) {
+    if (e instanceof TrainException) return { ok: false, error: e, ctx }
+    throw e
+  }
+  return { ok: true, ctx }
 }
 
 function registerExports(decl: ast.ExportDecl, ctx: RuntimeContext) {

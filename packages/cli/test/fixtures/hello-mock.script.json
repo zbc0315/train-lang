@@ -1,0 +1,3 @@
+[
+  { "fn": "greet", "result": { "kind": "success", "outputs": { "message": "Hello, mock world!" } } }
+]

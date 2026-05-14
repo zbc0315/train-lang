@@ -1,0 +1,6 @@
+func main() -> int {
+  let = ;
+  return 1
+}
+
+export main

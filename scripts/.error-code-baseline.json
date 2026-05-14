@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Baseline count of `new TrainException(...)` throw sites that do NOT yet carry a TrainErrorCode. CI fails if this number grows in a PR. Decrement (via migration) is welcomed.",
+  "uncodedThrows": 53,
+  "lastUpdated": "2026-05-15"
+}

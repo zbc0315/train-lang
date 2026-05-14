@@ -10,7 +10,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "lint:error-codes": "node --experimental-strip-types scripts/check-error-codes.ts"
   },
   "engines": {
     "node": ">=20",

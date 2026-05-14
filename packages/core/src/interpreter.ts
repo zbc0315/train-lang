@@ -62,6 +62,20 @@ export interface InterpreterConfig {
   defaultFaiTimeoutMs?: number
   /** Adapter-specific model id (passed to adapter). */
   model?: string
+  /**
+   * Host-supplied "how to write outputs" hint appended to every fai
+   * prompt. Replaces the built-in direct-API or agent-CLI hint.
+   * Hosts with their own PTY protocol (ccweb, etc.) supply theirs here.
+   * See prompt-composer.ts ComposeOptions.writeProtocolHint.
+   */
+  writeProtocolHint?: string
+  /**
+   * AbortSignal forwarded to every adapter call's FaiCallOptions.signal.
+   * When aborted, adapters that honor cancellation should resolve with
+   * `{ kind: "cancelled" }`. The interpreter additionally short-circuits
+   * pending retries once the signal fires.
+   */
+  signal?: AbortSignal
 }
 
 export class Interpreter {
@@ -70,6 +84,8 @@ export class Interpreter {
   private readonly maxFaiAttempts: number
   private readonly defaultFaiTimeoutMs: number
   private readonly model?: string
+  private readonly writeProtocolHint?: string
+  private readonly hostSignal?: AbortSignal
 
   constructor(private ctx: RuntimeContext, cfg: InterpreterConfig = {}) {
     // ctx is intentionally mutable (private but not readonly) so that
@@ -79,6 +95,8 @@ export class Interpreter {
     this.maxFaiAttempts = cfg.maxFaiAttempts ?? 3
     this.defaultFaiTimeoutMs = cfg.defaultFaiTimeoutMs ?? 600_000
     this.model = cfg.model
+    this.writeProtocolHint = cfg.writeProtocolHint
+    this.hostSignal = cfg.signal
   }
 
   // ─── Expressions ─────────────────────────────────────────────────────
@@ -405,12 +423,20 @@ export class Interpreter {
     const base = composePrompt(decl, argMap, {
       capabilities: this.adapter.capabilities,
       callId,
+      writeProtocolHint: this.writeProtocolHint,
     })
     let promptText = base.text
 
     let lastErrors: ReturnType<typeof validateOutputs> | null = null
 
     for (let attempt = 0; attempt < this.maxFaiAttempts; attempt++) {
+      if (this.hostSignal?.aborted) {
+        throw new TrainException(
+          'UserCancelError',
+          `fai ${fn.name}: cancelled before attempt ${attempt + 1}`,
+          range,
+        )
+      }
       const req: FaiCall = {
         callId,
         fnName: fn.name,
@@ -422,6 +448,7 @@ export class Interpreter {
           maxAttempts: this.maxFaiAttempts,
           attempt,
           model: this.model,
+          signal: this.hostSignal,
         },
       }
       const result = await this.adapter.call(req)

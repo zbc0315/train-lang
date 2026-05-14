@@ -41,6 +41,18 @@ export interface ComposeOptions {
   capabilities: AdapterCapabilities
   /** Adapter context for the writesWorkflowData hint. */
   callId?: number
+  /**
+   * Override the final "how to write outputs" hint. If provided, this
+   * string replaces both the default direct-API ("Respond with JSON ...")
+   * hint and the default agent-CLI hint. Hosts that have their own PTY
+   * protocol (e.g. ccweb's `variables` + `task_progress.finish` scheme)
+   * pass their own protocol text here. The composer still emits the
+   * [System] / [Inputs] / [Task] / [Outputs] sections unchanged.
+   *
+   * The string is appended as a final section verbatim — no quoting,
+   * no template interpolation.
+   */
+  writeProtocolHint?: string
 }
 
 export function composePrompt(
@@ -96,7 +108,10 @@ export function composePrompt(
       outputLines.join('\n'),
   )
 
-  if (opts.capabilities.writesWorkflowData) {
+  if (opts.writeProtocolHint !== undefined) {
+    // Host-provided protocol overrides built-in defaults entirely.
+    sections.push(opts.writeProtocolHint)
+  } else if (opts.capabilities.writesWorkflowData) {
     sections.push(
       `[Write outputs by modifying \`.ccweb/workflow_data.json\` at ` +
         `stack[<callId>].outputs.<name>, then set ` +

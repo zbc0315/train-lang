@@ -1,0 +1,5 @@
+@cache
+func slow(x: int) -> int {
+  return x
+}
+export slow

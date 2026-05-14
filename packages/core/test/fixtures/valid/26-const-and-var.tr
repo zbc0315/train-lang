@@ -1,0 +1,6 @@
+const MAX: int = 100
+const NAME: string = "train"
+var counter: int = 0
+var draft: string
+func t() { return }
+export t

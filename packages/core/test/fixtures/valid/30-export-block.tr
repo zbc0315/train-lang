@@ -1,0 +1,4 @@
+func a() { }
+func b() { }
+func c() { }
+export { a, b, c }

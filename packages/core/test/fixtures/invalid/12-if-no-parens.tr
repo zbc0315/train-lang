@@ -1,0 +1,3 @@
+func t() {
+  if x > 0 { return }
+}

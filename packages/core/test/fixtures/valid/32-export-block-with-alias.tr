@@ -1,0 +1,3 @@
+func helper() { }
+func main_impl() { }
+export { main_impl as main, helper }

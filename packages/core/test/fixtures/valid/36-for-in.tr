@@ -1,0 +1,6 @@
+func t() {
+  for item in items {
+    let x = item
+  }
+}
+export t

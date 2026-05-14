@@ -1,0 +1,13 @@
+func t() {
+  while (running) {
+    let x = step()
+    if (x == 0) {
+      break
+    }
+    if (x < 0) {
+      continue
+    }
+  }
+}
+fai step() -> r: int { }
+export t

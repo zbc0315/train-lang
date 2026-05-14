@@ -1,0 +1,3 @@
+import * as utils from "../lib"
+func t() { return }
+export t

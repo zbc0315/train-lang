@@ -1,0 +1,7 @@
+var state: int = 0
+func t() {
+  obj.field = 1
+  arr[0] = 2
+  obj.nested[1].x = 3
+}
+export t

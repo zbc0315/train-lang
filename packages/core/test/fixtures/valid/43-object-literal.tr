@@ -1,0 +1,7 @@
+func t() {
+  let o = { a: 1, b: 2 }
+  let empty = {}
+  let shorthand = { x }
+  let mixed = { x, y: 2, "z": 3 }
+}
+export t

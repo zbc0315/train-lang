@@ -1,0 +1,7 @@
+func t() {
+  let [a, b, c] = triple()
+  let [first] = single()
+}
+fai triple() -> r1: int, r2: int, r3: int { }
+fai single() -> only: int { }
+export t

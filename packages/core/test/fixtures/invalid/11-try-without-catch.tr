@@ -1,0 +1,5 @@
+func t() {
+  try {
+    let r = 1
+  }
+}

@@ -1,0 +1,3 @@
+@runtime(adapter = "claude", maxLlmRetries = 3)
+fai f(x: int) -> r: int { }
+export f

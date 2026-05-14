@@ -1,0 +1,6 @@
+fai analyze(x: int) -> rating: int 0-10, notes: string { }
+func t() {
+  let { rating, notes } = analyze(5)
+  let { rating: r2 } = analyze(6)
+}
+export t

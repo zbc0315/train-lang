@@ -1,0 +1,7 @@
+func t() -> bool {
+  let r = a + b * c - d / e % f
+  let s = a < b && c > d || !e
+  let u = (a == b) ? "yes" : "no"
+  return r > 0 && s != null && u == "yes"
+}
+export t

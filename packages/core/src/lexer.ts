@@ -154,7 +154,15 @@ export const Colon = createToken({ name: 'Colon', pattern: /:/ })
 export const Semicolon = createToken({ name: 'Semicolon', pattern: /;/ })
 export const Dot = createToken({ name: 'Dot', pattern: /\./ })
 export const Question = createToken({ name: 'Question', pattern: /\?/ })
-export const At = createToken({ name: 'At', pattern: /@/ })
+// AtName covers both annotations (@runtime, @cache, …) and import version
+// tags (@abc1234, @v1.0.0, @latest). The parser disambiguates by position.
+// Pattern accepts letters/digits/_/./- in the trailing chunk so semver and
+// hashes both fit. No-space rule (e.g. `@runtime` vs `@ runtime`) is
+// enforced lexically by the single-token boundary.
+export const AtName = createToken({
+  name: 'AtName',
+  pattern: /@[A-Za-z_][A-Za-z0-9_.\-]*/,
+})
 export const Plus = createToken({ name: 'Plus', pattern: /\+/ })
 export const Dash = createToken({ name: 'Dash', pattern: /-/ })
 export const Star = createToken({ name: 'Star', pattern: /\*/ })
@@ -242,7 +250,7 @@ export const allTokens = [
   Semicolon,
   Dot,
   Question,
-  At,
+  AtName,
   Plus,
   Dash,
   Star,

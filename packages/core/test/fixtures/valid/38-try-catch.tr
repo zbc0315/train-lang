@@ -1,0 +1,11 @@
+func t() {
+  try {
+    let r = risky()
+  } catch ValidationError as e {
+    log_err(e)
+  } catch TimeoutError {
+    bail()
+  }
+}
+fai risky() -> r: int { }
+export t

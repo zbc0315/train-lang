@@ -1,0 +1,7 @@
+func t() {
+  let xs = [1, 2, 3]
+  let ys = []
+  let zs = [1, 2, 3,]
+  let nested = [[1, 2], [3, 4]]
+}
+export t

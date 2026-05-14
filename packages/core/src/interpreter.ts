@@ -1,30 +1,20 @@
 /**
- * train language interpreter (M2 minimum viable).
+ * train language interpreter — M3.
  *
- * What this implements:
- *  - All expression forms (literals, template strings, identifiers,
- *    array/object literals, unary, binary with short-circuit, ternary,
- *    member, index, call)
- *  - let/var/const declarations + destructuring binds
- *  - Assignment with all `=` / `+=` / `-=` / `*=` / `/=` / `%=` forms
- *  - if/else-if/else
- *  - for-in (over arrays, strings, object keys)
- *  - while
- *  - break / continue / return (via control-flow signals)
- *  - try-catch with class-name match + optional binding
- *  - func calls with positional args + lexical scoping
+ * Compared to M2 this revision:
+ *  - is fully async (every evalExpr / execStmt / callFunc returns Promise),
+ *    so fai calls can suspend on awaited adapter responses without
+ *    blocking the event loop
+ *  - implements real fai execution via an injected LLMAdapter:
+ *    composes a prompt, dispatches to adapter.call, validates outputs,
+ *    re-prompts with feedback on validation failures up to maxAttempts
+ *  - falls back to the M2 "no adapter installed" RuntimeError if no
+ *    adapter is configured
  *
- * NOT implemented (stubs throw clearly):
- *  - fai function execution (requires LLMAdapter — M3)
- *  - ask_user (requires host callback — M3)
- *  - import / subflow (M5)
- *  - persistent stack frames (M3 when fai introduces suspend points)
- *
- * Control flow via JS throw/catch:
- *  - return  → TrainReturnSignal
- *  - break   → TrainBreakSignal
- *  - continue → TrainContinueSignal
- *  - user exception → TrainException (caught by try/catch in program)
+ * Out of scope (later milestones):
+ *  - Persistent stack-frame serialization (M3+)
+ *  - Subflow / module loading (M5)
+ *  - Cancellation propagation through fai (needs interpreter-level AbortController)
  */
 
 import * as ast from './ast.js'
@@ -46,6 +36,9 @@ import {
   isBuiltin,
 } from './runtime.js'
 import { defaultBuiltinBindings, formatValue } from './builtins.js'
+import type { LLMAdapter, FaiCall } from '@train-lang/adapter-spec'
+import { composePrompt } from './prompt-composer.js'
+import { composeRetryFeedback, validateOutputs } from './validation.js'
 
 export interface RunResult {
   ok: boolean
@@ -53,12 +46,33 @@ export interface RunResult {
   error?: TrainException
 }
 
+export interface InterpreterConfig {
+  adapter?: LLMAdapter
+  /** Total attempts per fai call (initial + retries). Default 3. */
+  maxFaiAttempts?: number
+  /** Per-fai-call timeout in ms (passed to adapter). Default 600000. */
+  defaultFaiTimeoutMs?: number
+  /** Adapter-specific model id (passed to adapter). */
+  model?: string
+}
+
 export class Interpreter {
-  constructor(private ctx: RuntimeContext) {}
+  private faiCallCounter = 0
+  private readonly adapter?: LLMAdapter
+  private readonly maxFaiAttempts: number
+  private readonly defaultFaiTimeoutMs: number
+  private readonly model?: string
+
+  constructor(private ctx: RuntimeContext, cfg: InterpreterConfig = {}) {
+    this.adapter = cfg.adapter
+    this.maxFaiAttempts = cfg.maxFaiAttempts ?? 3
+    this.defaultFaiTimeoutMs = cfg.defaultFaiTimeoutMs ?? 600_000
+    this.model = cfg.model
+  }
 
   // ─── Expressions ─────────────────────────────────────────────────────
 
-  evalExpr(expr: ast.Expr, scope: Scope): Value {
+  async evalExpr(expr: ast.Expr, scope: Scope): Promise<Value> {
     switch (expr.kind) {
       case 'IntLit':
       case 'FloatLit':
@@ -73,12 +87,15 @@ export class Interpreter {
         return this.evalTemplate(expr, scope)
       case 'IdentExpr':
         return this.evalIdent(expr, scope)
-      case 'ArrayLit':
-        return expr.elements.map((e) => this.evalExpr(e, scope))
+      case 'ArrayLit': {
+        const out: Value[] = []
+        for (const e of expr.elements) out.push(await this.evalExpr(e, scope))
+        return out
+      }
       case 'ObjectLit': {
         const obj: { [k: string]: Value } = {}
         for (const f of expr.fields) {
-          obj[f.key] = this.evalExpr(f.value, scope)
+          obj[f.key] = await this.evalExpr(f.value, scope)
         }
         return obj
       }
@@ -87,16 +104,16 @@ export class Interpreter {
       case 'BinaryExpr':
         return this.evalBinary(expr, scope)
       case 'TernaryExpr':
-        return this.truthy(this.evalExpr(expr.cond, scope))
+        return this.truthy(await this.evalExpr(expr.cond, scope))
           ? this.evalExpr(expr.then, scope)
           : this.evalExpr(expr.otherwise, scope)
       case 'MemberExpr': {
-        const o = this.evalExpr(expr.object, scope)
+        const o = await this.evalExpr(expr.object, scope)
         return this.getMember(o, expr.property, expr.range)
       }
       case 'IndexExpr': {
-        const o = this.evalExpr(expr.object, scope)
-        const k = this.evalExpr(expr.index, scope)
+        const o = await this.evalExpr(expr.object, scope)
+        const k = await this.evalExpr(expr.index, scope)
         return this.getIndex(o, k, expr.range)
       }
       case 'CallExpr':
@@ -105,7 +122,6 @@ export class Interpreter {
   }
 
   private evalIdent(expr: ast.IdentExpr, scope: Scope): Value {
-    // Lookup order: local scope chain → globals → constants → functions → builtins
     const localVal = scopeLookup(scope, expr.name)
     if (localVal !== undefined) return localVal
     if (this.ctx.globals.has(expr.name)) return this.ctx.globals.get(expr.name)!
@@ -122,17 +138,23 @@ export class Interpreter {
     )
   }
 
-  private evalTemplate(expr: ast.TemplateString, scope: Scope): string {
+  private async evalTemplate(
+    expr: ast.TemplateString,
+    scope: Scope,
+  ): Promise<string> {
     const parts: string[] = []
     for (const p of expr.parts) {
       if (p.kind === 'TemplateChunk') parts.push(p.value)
-      else parts.push(formatValue(this.evalExpr(p.expr, scope)))
+      else parts.push(formatValue(await this.evalExpr(p.expr, scope)))
     }
     return parts.join('')
   }
 
-  private evalUnary(expr: ast.UnaryExpr, scope: Scope): Value {
-    const v = this.evalExpr(expr.operand, scope)
+  private async evalUnary(
+    expr: ast.UnaryExpr,
+    scope: Scope,
+  ): Promise<Value> {
+    const v = await this.evalExpr(expr.operand, scope)
     if (expr.op === '-') {
       if (typeof v !== 'number')
         throw new TrainException(
@@ -145,21 +167,23 @@ export class Interpreter {
     return !this.truthy(v)
   }
 
-  private evalBinary(expr: ast.BinaryExpr, scope: Scope): Value {
-    // Short-circuit on logical operators
+  private async evalBinary(
+    expr: ast.BinaryExpr,
+    scope: Scope,
+  ): Promise<Value> {
     if (expr.op === '&&') {
-      const l = this.evalExpr(expr.left, scope)
+      const l = await this.evalExpr(expr.left, scope)
       if (!this.truthy(l)) return l
       return this.evalExpr(expr.right, scope)
     }
     if (expr.op === '||') {
-      const l = this.evalExpr(expr.left, scope)
+      const l = await this.evalExpr(expr.left, scope)
       if (this.truthy(l)) return l
       return this.evalExpr(expr.right, scope)
     }
 
-    const l = this.evalExpr(expr.left, scope)
-    const r = this.evalExpr(expr.right, scope)
+    const l = await this.evalExpr(expr.left, scope)
+    const r = await this.evalExpr(expr.right, scope)
     switch (expr.op) {
       case '+':
         if (typeof l === 'string' || typeof r === 'string')
@@ -173,7 +197,11 @@ export class Interpreter {
       case '/':
         if (typeof l === 'number' && typeof r === 'number') {
           if (r === 0)
-            throw new TrainException('RuntimeError', 'division by zero', expr.range)
+            throw new TrainException(
+              'RuntimeError',
+              'division by zero',
+              expr.range,
+            )
           return l / r
         }
         throw binTypeErr(expr, l, r)
@@ -212,10 +240,8 @@ export class Interpreter {
         range,
       )
     if (typeof obj === 'object' && !Array.isArray(obj)) {
-      // Plain object or function-like / log namespace
       const o = obj as { [k: string]: Value }
       if (prop in o) return o[prop]!
-      // For function/builtin values, no fields accessible
       throw new TrainException(
         'RuntimeError',
         `unknown property '${prop}'`,
@@ -276,17 +302,16 @@ export class Interpreter {
     )
   }
 
-  private evalCall(expr: ast.CallExpr, scope: Scope): Value {
-    const callee = this.evalExpr(expr.callee, scope)
-    const args = expr.args.map((a) => this.evalExpr(a, scope))
+  private async evalCall(
+    expr: ast.CallExpr,
+    scope: Scope,
+  ): Promise<Value> {
+    const callee = await this.evalExpr(expr.callee, scope)
+    const args: Value[] = []
+    for (const a of expr.args) args.push(await this.evalExpr(a, scope))
     if (isFunctionValue(callee)) {
       if (callee.isFai) {
-        // M2 stub: real implementation comes with the LLM adapter in M3.
-        throw new TrainException(
-          'RuntimeError',
-          `fai function '${callee.name}' is not yet executable (no LLM adapter installed)`,
-          expr.range,
-        )
+        return this.callFai(callee, args, expr.range)
       }
       return this.callFunc(callee, args, expr.range)
     }
@@ -301,11 +326,11 @@ export class Interpreter {
     )
   }
 
-  callFunc(
+  async callFunc(
     fn: FunctionValue,
     args: Value[],
     range?: ast.Range,
-  ): Value {
+  ): Promise<Value> {
     if (fn.decl.kind !== 'FuncDecl')
       throw new InterpreterBug('callFunc dispatched on non-func decl')
     const decl = fn.decl as ast.FuncDecl
@@ -319,7 +344,7 @@ export class Interpreter {
     const callScope = newScope(fn.definedIn)
     decl.params.forEach((p, i) => callScope.bindings.set(p.name, args[i]!))
     try {
-      this.execBlock(decl.body, callScope)
+      await this.execBlock(decl.body, callScope)
     } catch (e) {
       if (e instanceof TrainReturnSignal) return e.value ?? null
       throw e
@@ -327,14 +352,142 @@ export class Interpreter {
     return null
   }
 
-  // ─── Statements / blocks ─────────────────────────────────────────────
+  /**
+   * Execute a fai call: compose prompt → adapter.call → validate →
+   * retry-with-feedback loop. Returns the validated outputs as a single
+   * object (containing one key per declared output).
+   */
+  async callFai(
+    fn: FunctionValue,
+    args: Value[],
+    range?: ast.Range,
+  ): Promise<Value> {
+    if (fn.decl.kind !== 'FaiDecl')
+      throw new InterpreterBug('callFai dispatched on non-fai decl')
+    const decl = fn.decl as ast.FaiDecl
 
-  execBlock(block: ast.Block, scope: Scope) {
-    const inner = newScope(scope)
-    for (const s of block.stmts) this.execStmt(s, inner)
+    if (!this.adapter) {
+      throw new TrainException(
+        'RuntimeError',
+        `fai function '${fn.name}' requires an LLM adapter, none installed`,
+        range,
+      )
+    }
+
+    if (args.length !== decl.params.length) {
+      throw new TrainException(
+        'RuntimeError',
+        `fai ${fn.name}() expects ${decl.params.length} arg(s), got ${args.length}`,
+        range,
+      )
+    }
+
+    const callId = ++this.faiCallCounter
+    const argMap = new Map<string, Value>()
+    decl.params.forEach((p, i) => argMap.set(p.name, args[i]!))
+
+    // Compose the prompt once; retry attempts will append feedback.
+    const base = composePrompt(decl, argMap, {
+      capabilities: this.adapter.capabilities,
+      callId,
+    })
+    let promptText = base.text
+
+    let lastErrors: ReturnType<typeof validateOutputs> | null = null
+
+    for (let attempt = 0; attempt < this.maxFaiAttempts; attempt++) {
+      const req: FaiCall = {
+        callId,
+        fnName: fn.name,
+        prompt: promptText,
+        inputs: base.inputs,
+        outputs: base.outputs,
+        options: {
+          timeoutMs: this.defaultFaiTimeoutMs,
+          maxAttempts: this.maxFaiAttempts,
+          attempt,
+          model: this.model,
+        },
+      }
+      const result = await this.adapter.call(req)
+
+      switch (result.kind) {
+        case 'success': {
+          const validated = validateOutputs(decl.outputs, result.outputs)
+          if (validated.ok) {
+            return validated.outputs as Value
+          }
+          lastErrors = validated
+          if (attempt < this.maxFaiAttempts - 1) {
+            // Append feedback to prompt and retry
+            promptText =
+              base.text +
+              '\n\n' +
+              composeRetryFeedback(
+                validated.errors,
+                attempt,
+                this.maxFaiAttempts,
+              )
+          }
+          break
+        }
+        case 'validation-error':
+          // Adapter performed its own validation and rejected outputs
+          lastErrors = { ok: false, errors: result.errors }
+          if (attempt < this.maxFaiAttempts - 1) {
+            promptText =
+              base.text +
+              '\n\n' +
+              composeRetryFeedback(
+                result.errors,
+                attempt,
+                this.maxFaiAttempts,
+              )
+          }
+          break
+        case 'timeout':
+          throw new TrainException(
+            'TimeoutError',
+            `fai ${fn.name}: adapter timed out (attempt ${attempt + 1})`,
+            range,
+          )
+        case 'cancelled':
+          throw new TrainException(
+            'UserCancelError',
+            `fai ${fn.name}: cancelled`,
+            range,
+          )
+        case 'error':
+          if (result.recoverable && attempt < this.maxFaiAttempts - 1) {
+            // try again with original prompt (no schema feedback)
+            break
+          }
+          throw new TrainException(
+            'RuntimeError',
+            `fai ${fn.name}: ${result.message}`,
+            range,
+          )
+      }
+    }
+
+    // All attempts exhausted with validation errors
+    const errs = (lastErrors && !lastErrors.ok ? lastErrors.errors : []) ?? []
+    const summary = errs.map((e) => `${e.outputName}: ${e.message}`).join('; ')
+    throw new TrainException(
+      'ValidationError',
+      `fai ${fn.name}: failed after ${this.maxFaiAttempts} attempt(s) — ${summary || 'no details'}`,
+      range,
+    )
   }
 
-  execStmt(stmt: ast.Stmt, scope: Scope) {
+  // ─── Statements / blocks ─────────────────────────────────────────────
+
+  async execBlock(block: ast.Block, scope: Scope): Promise<void> {
+    const inner = newScope(scope)
+    for (const s of block.stmts) await this.execStmt(s, inner)
+  }
+
+  async execStmt(stmt: ast.Stmt, scope: Scope): Promise<void> {
     switch (stmt.kind) {
       case 'LetDecl':
         return this.execLet(stmt, scope)
@@ -354,16 +507,16 @@ export class Interpreter {
         throw new TrainContinueSignal()
       case 'ReturnStmt':
         throw new TrainReturnSignal(
-          stmt.value ? this.evalExpr(stmt.value, scope) : null,
+          stmt.value ? await this.evalExpr(stmt.value, scope) : null,
         )
       case 'ExprStmt':
-        this.evalExpr(stmt.expr, scope)
+        await this.evalExpr(stmt.expr, scope)
         return
     }
   }
 
-  private execLet(stmt: ast.LetDecl, scope: Scope) {
-    const v = stmt.init ? this.evalExpr(stmt.init, scope) : null
+  private async execLet(stmt: ast.LetDecl, scope: Scope): Promise<void> {
+    const v = stmt.init ? await this.evalExpr(stmt.init, scope) : null
     this.bindLetTarget(stmt.target, v, scope, stmt.range)
   }
 
@@ -397,7 +550,6 @@ export class Interpreter {
       }
       return
     }
-    // ArrayDestruct
     if (!Array.isArray(v)) {
       throw new TrainException(
         'RuntimeError',
@@ -410,18 +562,23 @@ export class Interpreter {
     }
   }
 
-  private execAssign(stmt: ast.Assignment, scope: Scope) {
-    const rhs = this.evalExpr(stmt.value, scope)
+  private async execAssign(
+    stmt: ast.Assignment,
+    scope: Scope,
+  ): Promise<void> {
+    const rhs = await this.evalExpr(stmt.value, scope)
     const baseName = stmt.target.base
 
     if (stmt.target.suffixes.length === 0) {
-      // simple variable assignment
       const current =
         scopeLookup(scope, baseName) ??
         (this.ctx.globals.has(baseName)
           ? this.ctx.globals.get(baseName)!
           : undefined)
-      const newVal = stmt.op === '=' ? rhs : this.applyCompound(stmt.op, current, rhs, stmt.range)
+      const newVal =
+        stmt.op === '='
+          ? rhs
+          : this.applyCompound(stmt.op, current, rhs, stmt.range)
       if (scopeAssign(scope, baseName, newVal)) return
       if (this.ctx.globals.has(baseName)) {
         this.ctx.globals.set(baseName, newVal)
@@ -440,11 +597,10 @@ export class Interpreter {
       )
     }
 
-    // Suffix chain: walk to penultimate, then set last
-    let cursor: Value =
+    let cursor: Value | undefined =
       scopeLookup(scope, baseName) ??
       this.ctx.globals.get(baseName) ??
-      this.ctx.constants.get(baseName)!
+      this.ctx.constants.get(baseName)
     if (cursor === undefined) {
       throw new TrainException(
         'RuntimeError',
@@ -453,27 +609,37 @@ export class Interpreter {
       )
     }
     for (let i = 0; i < stmt.target.suffixes.length - 1; i++) {
-      cursor = this.followSuffix(cursor, stmt.target.suffixes[i]!, scope)
+      cursor = await this.followSuffix(
+        cursor as Value,
+        stmt.target.suffixes[i]!,
+        scope,
+      )
     }
     const lastSuf = stmt.target.suffixes[stmt.target.suffixes.length - 1]!
-    const oldValue = this.followSuffix(cursor, lastSuf, scope)
+    const oldValue = await this.followSuffix(cursor as Value, lastSuf, scope)
     const newVal =
-      stmt.op === '=' ? rhs : this.applyCompound(stmt.op, oldValue, rhs, stmt.range)
-    this.setSuffix(cursor, lastSuf, newVal, scope, stmt.range)
+      stmt.op === '='
+        ? rhs
+        : this.applyCompound(stmt.op, oldValue, rhs, stmt.range)
+    await this.setSuffix(cursor as Value, lastSuf, newVal, scope, stmt.range)
   }
 
-  private followSuffix(obj: Value, suf: ast.LValueSuffix, scope: Scope): Value {
+  private async followSuffix(
+    obj: Value,
+    suf: ast.LValueSuffix,
+    scope: Scope,
+  ): Promise<Value> {
     if (suf.kind === 'MemberSuffix') return this.getMember(obj, suf.name)
-    return this.getIndex(obj, this.evalExpr(suf.index, scope))
+    return this.getIndex(obj, await this.evalExpr(suf.index, scope))
   }
 
-  private setSuffix(
+  private async setSuffix(
     obj: Value,
     suf: ast.LValueSuffix,
     val: Value,
     scope: Scope,
     range: ast.Range,
-  ) {
+  ): Promise<void> {
     if (suf.kind === 'MemberSuffix') {
       if (obj === null || typeof obj !== 'object' || Array.isArray(obj))
         throw new TrainException(
@@ -484,7 +650,7 @@ export class Interpreter {
       ;(obj as { [k: string]: Value })[suf.name] = val
       return
     }
-    const key = this.evalExpr(suf.index, scope)
+    const key = await this.evalExpr(suf.index, scope)
     if (Array.isArray(obj)) {
       if (typeof key !== 'number')
         throw new TrainException(
@@ -555,26 +721,26 @@ export class Interpreter {
     }
   }
 
-  private execIf(stmt: ast.IfStmt, scope: Scope) {
-    if (this.truthy(this.evalExpr(stmt.cond, scope))) {
+  private async execIf(stmt: ast.IfStmt, scope: Scope): Promise<void> {
+    if (this.truthy(await this.evalExpr(stmt.cond, scope))) {
       return this.execBlock(stmt.then, scope)
     }
     for (const elif of stmt.elifs) {
-      if (this.truthy(this.evalExpr(elif.cond, scope))) {
+      if (this.truthy(await this.evalExpr(elif.cond, scope))) {
         return this.execBlock(elif.body, scope)
       }
     }
-    if (stmt.otherwise) this.execBlock(stmt.otherwise, scope)
+    if (stmt.otherwise) await this.execBlock(stmt.otherwise, scope)
   }
 
-  private execFor(stmt: ast.ForStmt, scope: Scope) {
-    const iter = this.evalExpr(stmt.iterable, scope)
+  private async execFor(stmt: ast.ForStmt, scope: Scope): Promise<void> {
+    const iter = await this.evalExpr(stmt.iterable, scope)
     const items = this.iterable(iter, stmt.range)
     for (const item of items) {
       const inner = newScope(scope)
       inner.bindings.set(stmt.binding, item)
       try {
-        this.execBlock(stmt.body, inner)
+        await this.execBlock(stmt.body, inner)
       } catch (e) {
         if (e instanceof TrainBreakSignal) return
         if (e instanceof TrainContinueSignal) continue
@@ -586,7 +752,12 @@ export class Interpreter {
   private iterable(v: Value, range: ast.Range): Value[] {
     if (Array.isArray(v)) return v
     if (typeof v === 'string') return [...v]
-    if (v !== null && typeof v === 'object' && !isFunctionValue(v) && !isBuiltin(v as unknown as Value)) {
+    if (
+      v !== null &&
+      typeof v === 'object' &&
+      !isFunctionValue(v) &&
+      !isBuiltin(v as unknown as Value)
+    ) {
       return Object.keys(v as { [k: string]: Value })
     }
     throw new TrainException(
@@ -596,10 +767,10 @@ export class Interpreter {
     )
   }
 
-  private execWhile(stmt: ast.WhileStmt, scope: Scope) {
-    while (this.truthy(this.evalExpr(stmt.cond, scope))) {
+  private async execWhile(stmt: ast.WhileStmt, scope: Scope): Promise<void> {
+    while (this.truthy(await this.evalExpr(stmt.cond, scope))) {
       try {
-        this.execBlock(stmt.body, scope)
+        await this.execBlock(stmt.body, scope)
       } catch (e) {
         if (e instanceof TrainBreakSignal) return
         if (e instanceof TrainContinueSignal) continue
@@ -608,27 +779,25 @@ export class Interpreter {
     }
   }
 
-  private execTry(stmt: ast.TryStmt, scope: Scope) {
+  private async execTry(stmt: ast.TryStmt, scope: Scope): Promise<void> {
     try {
-      this.execBlock(stmt.body, scope)
+      await this.execBlock(stmt.body, scope)
     } catch (e) {
       if (e instanceof TrainException) {
         for (const c of stmt.catches) {
           if (c.errorType === e.errorType) {
             const inner = newScope(scope)
             if (c.binding) {
-              // Bind the exception as a structured object
               inner.bindings.set(c.binding, {
                 type: e.errorType,
                 message: e.message,
               })
             }
-            this.execBlock(c.body, inner)
+            await this.execBlock(c.body, inner)
             return
           }
         }
       }
-      // not caught — propagate
       throw e
     }
   }
@@ -647,16 +816,16 @@ export class Interpreter {
 
 // ─── Top-level program runner ─────────────────────────────────────────
 
-export interface RunOptions {
-  /** Name of the entry export to call. Default: "main". */
+export interface RunOptions extends InterpreterConfig {
   entry?: string
-  /** Positional arguments passed to the entry function. */
   args?: Value[]
-  /** Additional builtins to merge atop the defaults. */
   extraBuiltins?: Map<string, Value>
 }
 
-export function runProgram(program: ast.Program, opts: RunOptions = {}): RunResult {
+export async function runProgram(
+  program: ast.Program,
+  opts: RunOptions = {},
+): Promise<RunResult> {
   const ctx: RuntimeContext = {
     constants: new Map(),
     globals: new Map(),
@@ -664,7 +833,6 @@ export function runProgram(program: ast.Program, opts: RunOptions = {}): RunResu
     builtins: new Map(),
     exports: new Map(),
   }
-  // Built-ins
   for (const [k, v] of defaultBuiltinBindings()) {
     ctx.builtins.set(k, v as unknown as BuiltinFunction)
   }
@@ -674,26 +842,22 @@ export function runProgram(program: ast.Program, opts: RunOptions = {}): RunResu
     }
   }
 
-  const interp = new Interpreter(ctx)
+  const interp = new Interpreter(ctx, opts)
   const rootScope = newScope(null)
 
-  // 1st pass: register function declarations (so they can be called
-  // before their textual position, like C/Python module scope).
   for (const item of program.items) {
     registerTopLevelFunctions(item, ctx, rootScope)
   }
 
-  // 2nd pass: evaluate top-level const/var initializers; handle exports.
   try {
     for (const item of program.items) {
-      evalTopLevelItem(item, interp, ctx, rootScope)
+      await evalTopLevelItem(item, interp, ctx, rootScope)
     }
   } catch (e) {
     if (e instanceof TrainException) return { ok: false, value: null, error: e }
     throw e
   }
 
-  // 3rd: find entry export and call it
   const entryName = opts.entry ?? 'main'
   const internalName = ctx.exports.get(entryName)
   if (!internalName) {
@@ -719,16 +883,21 @@ export function runProgram(program: ast.Program, opts: RunOptions = {}): RunResu
   }
   try {
     if (fn.isFai) {
-      return {
-        ok: false,
-        value: null,
-        error: new TrainException(
-          'RuntimeError',
-          `entry function '${entryName}' is a fai; cannot run without an LLM adapter`,
-        ),
+      // Allow fai as entry only if adapter installed
+      if (!opts.adapter) {
+        return {
+          ok: false,
+          value: null,
+          error: new TrainException(
+            'RuntimeError',
+            `entry function '${entryName}' is a fai; cannot run without an LLM adapter`,
+          ),
+        }
       }
+      const value = await interp.callFai(fn, opts.args ?? [])
+      return { ok: true, value }
     }
-    const value = interp.callFunc(fn, opts.args ?? [])
+    const value = await interp.callFunc(fn, opts.args ?? [])
     return { ok: true, value }
   } catch (e) {
     if (e instanceof TrainException) return { ok: false, value: null, error: e }
@@ -765,32 +934,27 @@ function registerTopLevelFunctions(
   }
 }
 
-function evalTopLevelItem(
+async function evalTopLevelItem(
   item: ast.TopLevel,
   interp: Interpreter,
   ctx: RuntimeContext,
   rootScope: Scope,
-) {
+): Promise<void> {
   switch (item.kind) {
     case 'Import':
-      // M2: imports are no-ops. M5 will load + execute external modules.
-      return
     case 'RuntimeAnnotation':
-      // Runtime config (adapter selection etc.) is irrelevant for the
-      // pure-compute subset; future milestones will read it.
       return
     case 'ConstDecl':
-      ctx.constants.set(item.name, interp.evalExpr(item.value, rootScope))
+      ctx.constants.set(item.name, await interp.evalExpr(item.value, rootScope))
       return
     case 'VarDecl':
       ctx.globals.set(
         item.name,
-        item.init ? interp.evalExpr(item.init, rootScope) : null,
+        item.init ? await interp.evalExpr(item.init, rootScope) : null,
       )
       return
     case 'FuncDecl':
     case 'FaiDecl':
-      // already registered in 1st pass
       return
     case 'ExportDecl':
       registerExports(item, ctx)
@@ -807,11 +971,10 @@ function registerExports(decl: ast.ExportDecl, ctx: RuntimeContext) {
     }
     return
   }
-  // `export func foo() {…}` / `export fai foo(…) -> … {…}`
   ctx.exports.set(tgt.name, tgt.name)
 }
 
-// ─── Local helpers shared across module ───────────────────────────────
+// ─── Local helpers ────────────────────────────────────────────────────
 
 function typeName(v: Value): string {
   if (v === null) return 'null'
@@ -858,7 +1021,8 @@ function deepEqValue(a: Value, b: Value): boolean {
   if (typeof a !== typeof b) return false
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) if (!deepEqValue(a[i]!, b[i]!)) return false
+    for (let i = 0; i < a.length; i++)
+      if (!deepEqValue(a[i]!, b[i]!)) return false
     return true
   }
   if (typeof a === 'object' && typeof b === 'object') {

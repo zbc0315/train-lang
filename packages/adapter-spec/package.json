@@ -1,7 +1,7 @@
 {
-  "name": "@train-lang/core",
+  "name": "@train-lang/adapter-spec",
   "version": "0.0.0",
-  "description": "train language core — lexer, parser, type checker, interpreter",
+  "description": "train language LLM adapter protocol — type definitions only, zero runtime dependencies",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,18 +19,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "echo 'adapter-spec is type-only, no runtime tests'",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
-  "dependencies": {
-    "@train-lang/adapter-spec": "workspace:*",
-    "chevrotain": "^11.0.3"
-  },
   "devDependencies": {
-    "@train-lang/adapter-mock": "workspace:*",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "typescript": "^5.6.0"
   }
 }

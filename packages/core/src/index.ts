@@ -78,7 +78,10 @@ export interface RunSourceResult {
   parseErrors: ReadonlyArray<unknown>
 }
 
-export function runSource(source: string, opts: RunOptions = {}): RunSourceResult {
+export async function runSource(
+  source: string,
+  opts: RunOptions = {},
+): Promise<RunSourceResult> {
   const { ast: program, lexErrors, parseErrors } = parseToAst(source)
   if (!program) {
     return {
@@ -88,7 +91,7 @@ export function runSource(source: string, opts: RunOptions = {}): RunSourceResul
       parseErrors,
     }
   }
-  const result: RunResult = runProgram(program, opts)
+  const result: RunResult = await runProgram(program, opts)
   return {
     ok: result.ok,
     value: result.value,
@@ -97,3 +100,16 @@ export function runSource(source: string, opts: RunOptions = {}): RunSourceResul
     parseErrors,
   }
 }
+
+// Also re-export the new helpers so adapter packages and tests can use them.
+export { composePrompt } from './prompt-composer.js'
+export {
+  validateOutputs,
+  validateValue,
+  composeRetryFeedback,
+} from './validation.js'
+export {
+  typeToDescriptor,
+  isPromptType,
+  describeType,
+} from './type-descriptor.js'

@@ -439,6 +439,10 @@ export class TrainParser extends CstParser {
       },
       { ALT: () => this.SUBRULE(this.exprStmt) },
     ])
+    // Optional explicit semicolon terminator. Newlines are also treated
+    // as terminators implicitly by chevrotain (which skips whitespace),
+    // so most programs write one statement per line.
+    this.OPTION(() => this.CONSUME(t.Semicolon))
   })
 
   /**

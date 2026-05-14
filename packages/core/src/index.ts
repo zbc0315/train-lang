@@ -7,12 +7,39 @@
  */
 
 export { tokenize, trainLexer, allTokens } from './lexer.js'
-export { parse, trainParser, type ParseResult } from './parser.js'
+export {
+  parse,
+  parseExpression,
+  trainParser,
+  type ParseResult,
+} from './parser.js'
 export { buildAst } from './builder.js'
 export * as ast from './ast.js'
 
+export {
+  Interpreter,
+  runProgram,
+  type RunResult,
+  type RunOptions,
+} from './interpreter.js'
+
+export {
+  TrainException,
+  TrainReturnSignal,
+  TrainBreakSignal,
+  TrainContinueSignal,
+  type Value,
+  type FunctionValue,
+  type BuiltinFunction,
+  type RuntimeContext,
+} from './runtime.js'
+
+export { defaultBuiltinBindings, formatValue } from './builtins.js'
+
 import { parse } from './parser.js'
 import { buildAst } from './builder.js'
+import { runProgram, type RunOptions, type RunResult } from './interpreter.js'
+import { TrainException } from './runtime.js'
 import type * as ast from './ast.js'
 
 export interface ParseToAstResult {
@@ -33,5 +60,40 @@ export function parseToAst(source: string): ParseToAstResult {
     ast: hasErrors ? null : buildAst(result.cst),
     lexErrors: result.lexErrors,
     parseErrors: result.parseErrors,
+  }
+}
+
+/**
+ * End-to-end: parse + build AST + execute. Useful for tests and the
+ * future `train run` CLI command (modulo CLI argument plumbing).
+ *
+ * Returns the value of the called entry function (or its error).
+ * Does not throw on lex/parse errors; returns them in the result.
+ */
+export interface RunSourceResult {
+  ok: boolean
+  value: import('./runtime.js').Value | null
+  error?: TrainException
+  lexErrors: ReadonlyArray<unknown>
+  parseErrors: ReadonlyArray<unknown>
+}
+
+export function runSource(source: string, opts: RunOptions = {}): RunSourceResult {
+  const { ast: program, lexErrors, parseErrors } = parseToAst(source)
+  if (!program) {
+    return {
+      ok: false,
+      value: null,
+      lexErrors,
+      parseErrors,
+    }
+  }
+  const result: RunResult = runProgram(program, opts)
+  return {
+    ok: result.ok,
+    value: result.value,
+    error: result.error,
+    lexErrors,
+    parseErrors,
   }
 }

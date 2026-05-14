@@ -101,7 +101,9 @@ export interface Annotation extends Located {
 export interface AnnotationArg extends Located {
   kind: 'AnnotationArg'
   key: string | null // null = positional
-  value: Literal
+  // Type-checker enforces this is a plain Literal; the AST allows
+  // TemplateString here for diagnostic friendliness.
+  value: Literal | TemplateString
 }
 
 // ─── Top-level declarations ───────────────────────────────────────────
@@ -342,6 +344,7 @@ export interface ExprStmt extends Located {
 
 export type Expr =
   | Literal
+  | TemplateString
   | IdentExpr
   | ArrayLit
   | ObjectLit
@@ -376,6 +379,32 @@ export interface BoolLit extends Located {
 
 export interface NullLit extends Located {
   kind: 'NullLit'
+}
+
+/**
+ * A double-quoted string that contains one or more `${expr}` interpolations.
+ * `parts` is a sequence of literal chunks (already unescaped) and expressions
+ * in source order. Always begins and ends with a TemplateChunk (possibly empty).
+ *
+ * Limit (MVP): expressions inside `${...}` MUST NOT contain string literals.
+ * The lexer treats the entire `"..."` as a single token and cannot handle
+ * nested quotes. A real implementation would use lexer modes.
+ */
+export interface TemplateString extends Located {
+  kind: 'TemplateString'
+  parts: TemplatePart[]
+}
+
+export type TemplatePart = TemplateChunk | TemplateExpr
+
+export interface TemplateChunk extends Located {
+  kind: 'TemplateChunk'
+  value: string // already unescaped
+}
+
+export interface TemplateExpr extends Located {
+  kind: 'TemplateExpr'
+  expr: Expr
 }
 
 export interface IdentExpr extends Located {
@@ -483,3 +512,4 @@ export type AstNode =
   | CatchClause
   | Expr
   | ObjectLitField
+  | TemplatePart

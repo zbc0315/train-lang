@@ -1,0 +1,4 @@
+func t() -> string {
+  return "newline\nand tab\tand dollar-sign \${not-interp}"
+}
+export t

@@ -1,0 +1,6 @@
+fai analyze() -> result: int { }
+func t() -> string {
+  let r = analyze()
+  return "rating is ${r.result + 1}"
+}
+export t

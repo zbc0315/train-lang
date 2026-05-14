@@ -1,0 +1,4 @@
+func t() -> string {
+  return "plain text no interp"
+}
+export t

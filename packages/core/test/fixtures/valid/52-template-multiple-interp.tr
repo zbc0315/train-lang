@@ -1,0 +1,4 @@
+func t(a: int, b: int) -> string {
+  return "sum=${a + b}, prod=${a * b}, max=${a > b ? a : b}"
+}
+export t

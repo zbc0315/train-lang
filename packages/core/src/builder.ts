@@ -14,7 +14,7 @@
  */
 
 import type { CstNode, IToken } from 'chevrotain'
-import { trainParser } from './parser.js'
+import { trainParser, parseExpression } from './parser.js'
 import * as ast from './ast.js'
 
 const BaseVisitor = trainParser.getBaseCstVisitorConstructor()
@@ -59,6 +59,10 @@ function cstRange(cst: CstNode): ast.Range {
 function unquoteString(raw: string): string {
   // raw is the matched StringLit including surrounding quotes
   const inner = raw.slice(1, -1)
+  return unescapeStringBody(inner)
+}
+
+function unescapeStringBody(inner: string): string {
   return inner.replace(/\\(.)/g, (_, ch: string) => {
     switch (ch) {
       case 'n':
@@ -81,6 +85,178 @@ function unquoteString(raw: string): string {
   })
 }
 
+/**
+ * Scan a string literal body for `${...}` interpolations and split it into
+ * alternating chunk / expression segments. Brace nesting inside expressions
+ * is tracked so `${ {a: 1}.a }` parses correctly.
+ *
+ * Limitation: expressions inside `${...}` MUST NOT contain string literals;
+ * the surrounding lexer treats the whole string as one token, so nested
+ * quotes would have already terminated the string at lex time.
+ *
+ * Each returned segment carries an offset relative to the START of the
+ * raw string body (NOT the source file). Caller offsets those by the
+ * original token's startOffset to produce file-relative ranges.
+ */
+interface RawSegment {
+  kind: 'chunk' | 'expr'
+  source: string
+  startInBody: number
+  endInBody: number
+}
+
+function splitTemplate(body: string): RawSegment[] {
+  // Invariant when output contains any expr: result is strictly
+  //   chunk, expr, chunk, expr, ..., chunk
+  // i.e. first and last segments are always chunks (possibly empty).
+  // When no expr appears, output is a single chunk (possibly empty).
+  const segments: RawSegment[] = []
+  let buf = ''
+  let bufStart = 0
+  let i = 0
+  const flushChunk = (endPos: number) => {
+    segments.push({
+      kind: 'chunk',
+      source: buf,
+      startInBody: bufStart,
+      endInBody: endPos,
+    })
+    buf = ''
+    bufStart = endPos
+  }
+  while (i < body.length) {
+    if (body[i] === '$' && body[i + 1] === '{') {
+      // chunk that precedes this interpolation (may be empty)
+      flushChunk(i)
+      // find matching `}` (track nested {})
+      let depth = 1
+      let j = i + 2
+      while (j < body.length && depth > 0) {
+        const ch = body[j]
+        if (ch === '{') depth++
+        else if (ch === '}') {
+          depth--
+          if (depth === 0) break
+        }
+        j++
+      }
+      if (depth !== 0) {
+        // Unterminated — recover by treating the rest as one chunk.
+        buf += body.slice(i)
+        bufStart = i
+        i = body.length
+        break
+      }
+      const exprBody = body.slice(i + 2, j)
+      segments.push({
+        kind: 'expr',
+        source: exprBody,
+        startInBody: i,
+        endInBody: j + 1,
+      })
+      bufStart = j + 1
+      i = j + 1
+    } else if (body[i] === '\\' && i + 1 < body.length) {
+      buf += body.slice(i, i + 2)
+      i += 2
+    } else {
+      buf += body[i]!
+      i++
+    }
+  }
+  // Final flush: keep the "first and last are chunks" invariant.
+  // If we have any expr OR no segments yet, emit a chunk for the tail
+  // (possibly empty). If we have only a partially-buffered plain string
+  // and no segments, the empty flush still produces the single chunk.
+  const hasExpr = segments.some((s) => s.kind === 'expr')
+  if (hasExpr || segments.length === 0) {
+    flushChunk(body.length)
+  } else if (buf.length > 0) {
+    // pure literal case where buffer was carried past a recovery path
+    flushChunk(body.length)
+  }
+  return segments
+}
+
+/**
+ * Build either a plain StringLit (no interpolation) or a TemplateString
+ * (one or more `${...}`) from the source token. Offsets in returned
+ * sub-ranges are relative to the source file (using `tok.startOffset` +
+ * 1 to skip the opening quote).
+ */
+function buildStringExpr(tok: IToken): ast.StringLit | ast.TemplateString {
+  const raw = tok.image
+  const body = raw.slice(1, -1) // strip surrounding quotes
+  const fullRange = tokenRange(tok)
+  const segs = splitTemplate(body)
+
+  if (!segs.some((s) => s.kind === 'expr')) {
+    // Pure literal — return StringLit
+    const merged = segs.map((s) => s.source).join('')
+    return {
+      kind: 'StringLit',
+      value: unescapeStringBody(merged),
+      range: fullRange,
+    }
+  }
+
+  // Has interpolation — build TemplateString
+  const bodyOffset = tok.startOffset + 1 // skip opening quote
+  const parts: ast.TemplatePart[] = segs.map((seg): ast.TemplatePart => {
+    if (seg.kind === 'chunk') {
+      return {
+        kind: 'TemplateChunk',
+        value: unescapeStringBody(seg.source),
+        range: subRange(fullRange, bodyOffset, seg.startInBody, seg.endInBody),
+      }
+    }
+    // expr — recursively parse it via the parser's exprEntry
+    const result = parseExpression(seg.source)
+    if (
+      result.lexErrors.length > 0 ||
+      result.parseErrors.length > 0 ||
+      !result.cst
+    ) {
+      // emit a fallback: empty string chunk with the broken expr's text.
+      // In a future revision we should propagate diagnostics up.
+      return {
+        kind: 'TemplateChunk',
+        value: '${' + seg.source + '}',
+        range: subRange(fullRange, bodyOffset, seg.startInBody, seg.endInBody),
+      }
+    }
+    const innerExpr = astBuilder.visit(result.cst) as ast.Expr
+    return {
+      kind: 'TemplateExpr',
+      expr: innerExpr,
+      range: subRange(fullRange, bodyOffset, seg.startInBody, seg.endInBody),
+    }
+  })
+  return {
+    kind: 'TemplateString',
+    parts,
+    range: fullRange,
+  }
+}
+
+/** Produce a Range for a sub-region of a single-line-ish source token.
+ *  Sufficient for now (no per-segment line/column tracking inside templates). */
+function subRange(
+  full: ast.Range,
+  bodyOffset: number,
+  startInBody: number,
+  endInBody: number,
+): ast.Range {
+  return {
+    startLine: full.startLine,
+    startColumn: full.startColumn,
+    endLine: full.endLine,
+    endColumn: full.endColumn,
+    startOffset: bodyOffset + startInBody,
+    endOffset: bodyOffset + endInBody,
+  }
+}
+
 function stripAtPrefix(name: string): string {
   return name.startsWith('@') ? name.slice(1) : name
 }
@@ -94,6 +270,11 @@ class TrainAstBuilder extends BaseVisitor {
   }
 
   // ─── Program ────────────────────────────────────────────────────────
+
+  /** Used by buildStringExpr → parseExpression for ${...} bodies. */
+  exprEntry(ctx: any): ast.Expr {
+    return this.visit(ctx.expr[0]) as ast.Expr
+  }
 
   program(ctx: any, _params?: unknown): ast.Program {
     const cst = (ctx.$cstNode ?? undefined) as CstNode | undefined
@@ -218,7 +399,7 @@ class TrainAstBuilder extends BaseVisitor {
     const keyTok = (ctx.Identifier as IToken[] | undefined)?.[0]
     const lits = ctx.literal as CstNode[]
     const literalCst = lits[0]!
-    const value = this.visit(literalCst) as ast.Literal
+    const value = this.visit(literalCst) as ast.Literal | ast.TemplateString
     const startTok = keyTok ?? findFirstToken(literalCst)
     const endRange = value.range
     return {
@@ -978,7 +1159,12 @@ class TrainAstBuilder extends BaseVisitor {
     return this.visit(ctx.expr[0])
   }
 
-  literal(ctx: any): ast.Literal {
+  /**
+   * Returns either a plain Literal or a TemplateString. Callers in
+   * expression position accept Expr; callers expecting a strict Literal
+   * (annotation args, type constraint values) should narrow by `kind`.
+   */
+  literal(ctx: any): ast.Literal | ast.TemplateString {
     if (ctx.IntLit) {
       const tok = (ctx.IntLit as IToken[])[0]!
       return {
@@ -997,11 +1183,7 @@ class TrainAstBuilder extends BaseVisitor {
     }
     if (ctx.StringLit) {
       const tok = (ctx.StringLit as IToken[])[0]!
-      return {
-        kind: 'StringLit',
-        value: unquoteString(tok.image),
-        range: tokenRange(tok),
-      }
+      return buildStringExpr(tok)
     }
     if (ctx.True) {
       const tok = (ctx.True as IToken[])[0]!

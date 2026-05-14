@@ -34,6 +34,13 @@ export class TrainParser extends CstParser {
     this.MANY(() => this.SUBRULE(this.topLevel))
   })
 
+  /** Entry rule for parsing a bare expression (used by template string
+   *  interpolation: the builder hands `${ ... }` body to this rule
+   *  rather than re-implementing expression parsing). */
+  public exprEntry = this.RULE('exprEntry', () => {
+    this.SUBRULE(this.expr)
+  })
+
   private topLevel = this.RULE('topLevel', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.importDecl) },
@@ -899,6 +906,22 @@ export function parse(source: string): ParseResult {
   const lexResult = t.trainLexer.tokenize(source)
   trainParser.input = lexResult.tokens as IToken[]
   const cst = trainParser.program()
+  return {
+    cst,
+    lexErrors: lexResult.errors,
+    parseErrors: trainParser.errors,
+  }
+}
+
+/**
+ * Parse a single expression. Used internally by the template-string
+ * interpolation builder. The source must be exactly an expression
+ * (no surrounding statement/punctuation).
+ */
+export function parseExpression(source: string): ParseResult {
+  const lexResult = t.trainLexer.tokenize(source)
+  trainParser.input = lexResult.tokens as IToken[]
+  const cst = trainParser.exprEntry()
   return {
     cst,
     lexErrors: lexResult.errors,

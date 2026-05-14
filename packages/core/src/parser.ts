@@ -307,14 +307,53 @@ export class TrainParser extends CstParser {
   // ─── Type annotations ─────────────────────────────────────────────────
 
   private typeAnnot = this.RULE('typeAnnot', () => {
-    // For this milestone: only leaf scalar types. Structural types
-    // (enum / array<T> / object{...}) will be added in a later milestone.
-    this.SUBRULE(this.scalarType)
+    this.OR([
+      { ALT: () => this.SUBRULE(this.enumType) },
+      { ALT: () => this.SUBRULE(this.arrayType) },
+      { ALT: () => this.SUBRULE(this.objectType) },
+      { ALT: () => this.SUBRULE(this.scalarType) }, // catch-all leaf type
+    ])
   })
 
   private scalarType = this.RULE('scalarType', () => {
     this.CONSUME(t.Identifier) // int / float / bool / string / prompt / any / etc.
     this.OPTION(() => this.SUBRULE(this.typeConstraint))
+  })
+
+  private enumType = this.RULE('enumType', () => {
+    this.CONSUME(t.KwEnum)
+    this.CONSUME(t.Colon)
+    this.CONSUME(t.Identifier) // first variant
+    this.MANY(() => {
+      this.CONSUME(t.Pipe)
+      this.CONSUME2(t.Identifier)
+    })
+  })
+
+  private arrayType = this.RULE('arrayType', () => {
+    this.CONSUME(t.KwArray)
+    this.CONSUME(t.LAngle)
+    this.SUBRULE(this.typeAnnot)
+    this.CONSUME(t.RAngle)
+    this.OPTION(() => this.SUBRULE(this.namedConstraint))
+  })
+
+  private objectType = this.RULE('objectType', () => {
+    this.CONSUME(t.KwObject)
+    this.CONSUME(t.LCurly)
+    this.SUBRULE(this.objectTypeField)
+    this.MANY(() => {
+      this.CONSUME(t.Comma)
+      this.SUBRULE2(this.objectTypeField)
+    })
+    this.OPTION(() => this.CONSUME2(t.Comma))
+    this.CONSUME(t.RCurly)
+  })
+
+  private objectTypeField = this.RULE('objectTypeField', () => {
+    this.CONSUME(t.Identifier)
+    this.CONSUME(t.Colon)
+    this.SUBRULE(this.typeAnnot)
   })
 
   private typeConstraint = this.RULE('typeConstraint', () => {

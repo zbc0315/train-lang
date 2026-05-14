@@ -1,0 +1,6 @@
+fai complex() -> r: object{
+  items: array<object{ name: string, score: int 0-10 }>,
+  status: enum: ok|fail,
+  meta: array<string>,
+} { }
+export complex

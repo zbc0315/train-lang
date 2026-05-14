@@ -1,0 +1,2 @@
+fai grade(x: int) -> result: enum: pass|fail|need_revise { }
+export grade

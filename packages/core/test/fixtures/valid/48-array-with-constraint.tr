@@ -1,0 +1,2 @@
+fai gather() -> items: array<int> minLen=1 { }
+export gather

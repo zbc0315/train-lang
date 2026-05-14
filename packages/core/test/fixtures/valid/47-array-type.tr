@@ -1,0 +1,4 @@
+const TAGS: array<string> = []
+var passed: array<int>
+fai collect() -> items: array<string> { }
+export collect

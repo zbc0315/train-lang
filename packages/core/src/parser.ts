@@ -37,9 +37,15 @@ export class TrainParser extends CstParser {
   private topLevel = this.RULE('topLevel', () => {
     this.OR([
       { ALT: () => this.SUBRULE(this.importDecl) },
-      { ALT: () => this.SUBRULE(this.runtimeAnnotation) },
       { ALT: () => this.SUBRULE(this.constDecl) },
       { ALT: () => this.SUBRULE(this.varDecl) },
+      // Annotation-prefixed forms — order matters: @runtime is its own
+      // top-level statement; any other @<name> applied to func/fai must
+      // route to annotatedDecl.
+      {
+        GATE: () => this.isRuntimeAnnotation(),
+        ALT: () => this.SUBRULE(this.runtimeAnnotation),
+      },
       {
         GATE: () => this.isAnnotatedFuncOrFai(),
         ALT: () => this.SUBRULE(this.annotatedDecl),
@@ -49,6 +55,12 @@ export class TrainParser extends CstParser {
       { ALT: () => this.SUBRULE(this.exportDecl) },
     ])
   })
+
+  /** @runtime(...) — distinguished from other annotations by literal name. */
+  private isRuntimeAnnotation(): boolean {
+    const t1 = this.LA(1)
+    return t1.tokenType === t.AtName && t1.image === '@runtime'
+  }
 
   /** Look ahead: an AtName followed eventually by `func` or `fai`. */
   private isAnnotatedFuncOrFai(): boolean {

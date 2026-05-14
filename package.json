@@ -1,0 +1,20 @@
+{
+  "name": "train-lang",
+  "version": "0.0.0",
+  "private": true,
+  "description": "train — a domain-specific language for LLM-driven workflows",
+  "homepage": "https://github.com/train-lang/train",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

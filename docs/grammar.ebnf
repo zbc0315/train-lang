@@ -1,0 +1,607 @@
+(* ============================================================
+ * TRAIN LANGUAGE — FORMAL GRAMMAR
+ * ============================================================
+ * version:   0.1.0-draft
+ * spec ref:  ~/Obsidian/Base/cc-web/工作流DSL.md §2
+ * status:    pre-implementation draft (M1 起点)
+ * authors:   tom + Claude
+ * updated:   2026-05-14
+ *
+ * Notation: EBNF (ISO/IEC 14977-style)
+ *   =        rule definition
+ *   |        alternation
+ *   [ ... ]  optional (0 or 1)
+ *   { ... }  repetition (0 or more)
+ *   ( ... )  grouping
+ *   "x"      terminal literal
+ *   (* x *)  comment
+ *
+ * Conventions:
+ *   - Rule names UpperCamelCase
+ *   - Terminals (keywords/punct) in double quotes
+ *   - Whitespace and comments are NOT explicit in this grammar
+ *     (handled at lexer level — see Part 12)
+ *   - Statement terminators: see Part 7 note on ASI
+ *
+ * Open items: see "OPEN ITEMS" at file end
+ * ============================================================ *)
+
+
+(* ============================================================
+ * PART 1 — PROGRAM
+ * ============================================================ *)
+
+Program            = { TopLevel } EOF .
+
+TopLevel           = Import
+                   | RuntimeAnnotation
+                   | ConstDecl
+                   | VarDecl
+                   | FuncDecl
+                   | FaiDecl
+                   | ExportDecl .
+
+
+(* ============================================================
+ * PART 2 — IMPORTS / EXPORTS
+ * ============================================================ *
+ *
+ * import { run } from "review-code"@abc1234
+ * import { run as my_run, helper } from "../utils"@v1.0.0
+ * import * as utils from "@global/lib"@latest
+ *
+ * export main
+ * export { main, helper }
+ * export main as run
+ * export func processOne(file) { ... }
+ * export fai analyze(...) -> ... { }
+ * ============================================================ *)
+
+Import             = "import" ImportClause "from" StringLit [ VersionTag ] .
+
+ImportClause       = NamedImports
+                   | NamespaceImport .
+
+NamedImports       = "{" ImportSpec { "," ImportSpec } [ "," ] "}" .
+ImportSpec         = Identifier [ "as" Identifier ] .
+
+NamespaceImport    = "*" "as" Identifier .
+
+VersionTag         = "@" VersionIdent .
+VersionIdent       = ( Letter | Digit ) { Letter | Digit | "." | "-" | "_" } .
+
+ExportDecl         = "export" ExportTarget .
+ExportTarget       = ExportNames
+                   | FuncDecl                          (* export func name(...) { } *)
+                   | FaiDecl .                         (* export fai name(...) -> ... { } *)
+ExportNames        = ExportSpec
+                   | "{" ExportSpec { "," ExportSpec } [ "," ] "}" .
+ExportSpec         = Identifier [ "as" Identifier ] .
+
+
+(* ============================================================
+ * PART 3 — ANNOTATIONS
+ * ============================================================ *
+ *
+ * Top-level runtime config:
+ *   @runtime(adapter = "claude", maxLlmRetries = 3)
+ *
+ * Declaration-level (attached to func / fai / import):
+ *   @adapter("codex")
+ *   @timeout(900)
+ *   @cache
+ *   @frozen
+ *   @mock                  (only in *.test.tr files; attaches to fai)
+ * ============================================================ *)
+
+RuntimeAnnotation  = "@runtime" "(" RuntimeArg { "," RuntimeArg } [ "," ] ")" .
+RuntimeArg         = Identifier "=" Literal .
+
+DeclAnnotation     = "@" Identifier [ "(" [ AnnoArgList ] ")" ] .
+AnnoArgList        = AnnoArg { "," AnnoArg } [ "," ] .
+AnnoArg            = Identifier "=" Literal
+                   | Literal .
+
+
+(* ============================================================
+ * PART 4 — TOP-LEVEL DECLARATIONS
+ * ============================================================ *)
+
+ConstDecl          = "const" Identifier ":" TypeAnnot "=" Expr .
+
+VarDecl            = "var" Identifier ":" TypeAnnot [ "=" Expr ] .
+
+FuncDecl           = { DeclAnnotation } "func" Identifier
+                     "(" [ ParamList ] ")"
+                     [ "->" TypeAnnot ]
+                     Block .
+
+FaiDecl            = { DeclAnnotation } "fai" Identifier
+                     "(" [ FaiParamList ] ")"
+                     "->" FaiOutputList
+                     Block .
+
+
+(* ============================================================
+ * PART 5 — PARAMETERS / OUTPUTS
+ * ============================================================ *
+ *
+ * func 参数：类型可选（推断）
+ * fai 参数：类型强制；引擎按 prompt 类型自动识别角色
+ * fai output：至少一个，逗号分隔；每个 "name : Type"
+ *
+ *   func add(x, y) -> int { return x + y }
+ *   fai greet(name: string, prompt: prompt) -> message: string { }
+ *   fai analyze(file: string) -> rating: int 0-10, notes: string { }
+ * ============================================================ *)
+
+ParamList          = Param { "," Param } [ "," ] .
+Param              = Identifier [ ":" TypeAnnot ] .
+
+FaiParamList       = FaiParam { "," FaiParam } [ "," ] .
+FaiParam           = Identifier ":" TypeAnnot .
+
+FaiOutputList      = FaiOutput { "," FaiOutput } .
+FaiOutput          = Identifier ":" TypeAnnot .
+
+
+(* ============================================================
+ * PART 6 — TYPE ANNOTATIONS
+ * ============================================================ *
+ *
+ *   int
+ *   int 0-10
+ *   int min=0
+ *   float 0.0-1.0
+ *   bool
+ *   string
+ *   string maxLen=200
+ *   string matches=/^\d+$/
+ *   prompt
+ *   enum: pass|fail|need-revise
+ *   array<int>
+ *   array<int> minLen=1
+ *   object{ rating: int, notes: string }
+ *   any
+ * ============================================================ *)
+
+TypeAnnot          = PromptType
+                   | EnumType
+                   | ArrayType
+                   | ObjectType
+                   | ScalarType
+                   | "any" .
+
+PromptType         = "prompt" .
+
+ScalarType         = ScalarBase [ TypeConstraint ] .
+ScalarBase         = "int" | "float" | "bool" | "string" .
+
+TypeConstraint     = RangeConstraint
+                   | NamedConstraint .
+RangeConstraint    = NumberLit "-" NumberLit .
+NamedConstraint    = Identifier "=" ConstraintValue .
+ConstraintValue    = Literal | RegexLit .
+
+EnumType           = "enum" ":" EnumVariant { "|" EnumVariant } .
+EnumVariant        = Identifier .
+
+ArrayType          = "array" "<" TypeAnnot ">" [ NamedConstraint ] .
+
+ObjectType         = "object" "{" ObjectTypeField { "," ObjectTypeField } [ "," ] "}" .
+ObjectTypeField    = Identifier ":" TypeAnnot .
+
+
+(* ============================================================
+ * PART 7 — STATEMENTS / BLOCKS
+ * ============================================================ *
+ *
+ * Statement terminator: newline OR ";" (auto-semicolon insertion).
+ * Within Block, statements separated by newline / ";".
+ * In practice the lexer emits implicit "STMT_END" tokens
+ * (see Part 12 for lexer rules).
+ * ============================================================ *)
+
+Block              = "{" { Stmt } "}" .
+
+Stmt               = LetDecl
+                   | Assignment
+                   | IfStmt
+                   | ForStmt
+                   | WhileStmt
+                   | TryStmt
+                   | BreakStmt
+                   | ContinueStmt
+                   | ReturnStmt
+                   | ExprStmt .
+
+LetDecl            = "let" LetTarget [ ":" TypeAnnot ] [ "=" Expr ] .
+LetTarget          = Identifier
+                   | ObjectDestruct
+                   | ArrayDestruct .
+
+ObjectDestruct     = "{" DestructField { "," DestructField } [ "," ] "}" .
+DestructField      = Identifier [ ":" Identifier ] .   (* { a: b } 重命名为本地 b *)
+
+ArrayDestruct      = "[" Identifier { "," Identifier } [ "," ] "]" .
+
+Assignment         = LValue AssignOp Expr .
+LValue             = Identifier { LValueSuffix } .
+LValueSuffix       = "." Identifier
+                   | "[" Expr "]" .
+AssignOp           = "=" | "+=" | "-=" | "*=" | "/=" | "%=" .
+
+IfStmt             = "if" "(" Expr ")" Block
+                     { "else" "if" "(" Expr ")" Block }
+                     [ "else" Block ] .
+
+ForStmt            = "for" Identifier "in" Expr Block .
+
+WhileStmt          = "while" "(" Expr ")" Block .
+
+TryStmt            = "try" Block CatchClause { CatchClause } .
+CatchClause        = "catch" ExceptionType [ "as" Identifier ] Block .
+ExceptionType      = Identifier .              (* ValidationError / TimeoutError / ... *)
+
+BreakStmt          = "break" .
+ContinueStmt       = "continue" .
+ReturnStmt         = "return" [ Expr ] .
+
+ExprStmt           = Expr .
+
+
+(* ============================================================
+ * PART 8 — EXPRESSIONS (precedence from LOW to HIGH)
+ * ============================================================ *
+ *
+ *  level   form                     associativity
+ *  ─────   ──────────────────────   ─────────────
+ *  1       a ? b : c                right
+ *  2       a || b                   left
+ *  3       a && b                   left
+ *  4       a == b   a != b          left
+ *  5       a < b  a <= b  a > b  a >= b   left
+ *  6       a + b   a - b            left
+ *  7       a * b   a / b   a % b    left
+ *  8       -a      !a                right (prefix)
+ *  9       a.b   a[b]   a(b...)     left (postfix)
+ *  10      literals / identifiers / ( e )
+ * ============================================================ *)
+
+Expr               = TernaryExpr .
+
+TernaryExpr        = LogicalOrExpr [ "?" Expr ":" Expr ] .
+
+LogicalOrExpr      = LogicalAndExpr { "||" LogicalAndExpr } .
+
+LogicalAndExpr     = EqualityExpr { "&&" EqualityExpr } .
+
+EqualityExpr       = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } .
+
+ComparisonExpr     = AdditiveExpr { ( "<" | "<=" | ">" | ">=" ) AdditiveExpr } .
+
+AdditiveExpr       = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } .
+
+MultiplicativeExpr = UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } .
+
+UnaryExpr          = [ "-" | "!" ] PostfixExpr .
+
+PostfixExpr        = PrimaryExpr { PostfixSuffix } .
+PostfixSuffix      = "." Identifier
+                   | "[" Expr "]"
+                   | "(" [ ArgList ] ")" .
+
+ArgList            = Expr { "," Expr } [ "," ] .
+
+PrimaryExpr        = Literal
+                   | StringLit                      (* may contain ${...} interpolation *)
+                   | Identifier
+                   | ArrayLit
+                   | ObjectLit
+                   | "(" Expr ")" .
+
+ArrayLit           = "[" [ Expr { "," Expr } [ "," ] ] "]" .
+
+ObjectLit          = "{" [ ObjectLitField { "," ObjectLitField } [ "," ] ] "}" .
+ObjectLitField     = Identifier ":" Expr             (* { a: 1 } *)
+                   | StringLit ":" Expr              (* { "k": 1 } *)
+                   | Identifier .                    (* shorthand: { x } = { x: x } *)
+
+
+(* ============================================================
+ * PART 9 — LITERALS
+ * ============================================================ *)
+
+Literal            = NumberLit | StringLit | BoolLit | NullLit .
+
+NumberLit          = IntLit | FloatLit .
+IntLit             = Digit { Digit } .
+FloatLit           = Digit { Digit } "." Digit { Digit } .
+
+StringLit          = '"' { StringChar | StringInterp } '"'
+                   | "'" { StringChar | StringInterp } "'" .
+
+(* Interpolation only allowed inside double-quoted strings (recommended);
+ * implementation may allow it in both. Single-quote strings preferred for
+ * literals without interpolation. *)
+StringInterp       = "${" Expr "}" .
+
+StringChar         = ? any unicode char except newline / quote / backslash ?
+                   | EscapeSeq .
+
+EscapeSeq          = "\" ( "n" | "t" | "r" | "\\" | "\"" | "'" | "$" | "u" Hex4 ) .
+Hex4               = HexDigit HexDigit HexDigit HexDigit .
+
+BoolLit            = "true" | "false" .
+NullLit            = "null" .
+
+RegexLit           = "/" RegexBody "/" [ RegexFlags ] .
+RegexBody          = ? any chars except unescaped "/" or newline ?
+                   | "\\" ? any char ? .
+RegexFlags         = { "i" | "g" | "m" | "s" | "u" | "y" } .
+
+
+(* ============================================================
+ * PART 10 — LEXICAL ELEMENTS
+ * ============================================================ *)
+
+Identifier         = ( Letter | "_" ) { Letter | Digit | "_" } .
+                   (* MUST NOT be a Keyword *)
+
+Letter             = "A".."Z" | "a".."z" .
+Digit              = "0".."9" .
+HexDigit           = Digit | "a".."f" | "A".."F" .
+
+
+(* ============================================================
+ * PART 11 — RESERVED KEYWORDS
+ * ============================================================ *
+ *
+ * Identifiers MUST NOT collide with this list.
+ * Annotations like @runtime / @mock are NOT keywords — they are
+ * prefixed identifiers in declaration position.
+ * Built-in function names (ask_user / push / len / log / etc.)
+ * are NOT keywords — they are pre-declared globals.
+ * ============================================================ *)
+
+Keyword            = (* module *)
+                     "import" | "from" | "as" | "export"
+                   | (* binding *)
+                     "const" | "var" | "let"
+                   | (* function *)
+                     "func" | "fai" | "return"
+                   | (* control *)
+                     "if" | "else"
+                   | "for" | "in" | "while"
+                   | "break" | "continue"
+                   | "try" | "catch"
+                   | (* literals *)
+                     "true" | "false" | "null"
+                   | (* types *)
+                     "int" | "float" | "bool" | "string" | "prompt"
+                   | "enum" | "array" | "object" | "any" .
+
+
+(* ============================================================
+ * PART 12 — LEXICAL RULES (whitespace / comments / line breaks)
+ * ============================================================ *
+ *
+ * Whitespace:
+ *   space, tab, CR, LF — all skipped between tokens.
+ *
+ * Comments:
+ *   LineComment  = "//" until end-of-line
+ *   BlockComment = "/*" until next "*\/" (not nested)
+ *   Both treated as whitespace (skipped).
+ *
+ * Statement termination (ASI rules):
+ *   A statement is terminated by:
+ *     (a) explicit ";" between tokens, OR
+ *     (b) newline NOT immediately followed by a continuation token.
+ *
+ *   Continuation tokens (do NOT terminate a statement when next line starts with them):
+ *     ")", "}", "]", ",", "."
+ *     binary operators: "+ - * / % == != < <= > >= && ||"
+ *     "?" ":" (ternary)
+ *     "=" (assignment)
+ *
+ *   Examples:
+ *     let x = a +              <- newline here does NOT terminate (next line starts with continuation)
+ *           b
+ *
+ *     return                   <- newline terminates ("return" + newline = return-no-value)
+ *     value                    <- this is a new statement (ExprStmt)
+ *
+ *   Implementation note: ASI is handled at lexer level by emitting
+ *   implicit STMT_END tokens before newlines that are statement boundaries.
+ *
+ * Reserved characters at lexer level:
+ *   { } ( ) [ ]
+ *   , . : ; ?
+ *   + - * / %
+ *   = == != < <= > >=
+ *   ! && ||
+ *   "  '  `
+ *   @  ->  =>
+ *   ${  (string interpolation start)
+ * ============================================================ *)
+
+
+(* ============================================================
+ * PART 13 — SEMANTIC CONSTRAINTS (NOT in grammar, enforced by TypeChecker)
+ * ============================================================ *
+ *
+ * These constraints are valid syntax but rejected at type-check stage:
+ *
+ *  S1. Every .tr file MUST have at least one ExportDecl.
+ *
+ *  S2. Top-level identifiers (const/var/func/fai) MUST be unique within file.
+ *
+ *  S3. fai parameters MUST have type annotations (grammar permits omission
+ *      via FaiParam = Identifier ":" TypeAnnot — ensure no path bypasses).
+ *
+ *  S4. fai outputs MUST have type annotations (enforced in FaiOutput).
+ *
+ *  S5. Top-level const/var MUST have type annotations (ConstDecl / VarDecl).
+ *
+ *  S6. const at top-level MUST have initializer.
+ *
+ *  S7. Function not first-class: Identifier in expression position MUST NOT
+ *      reference a func/fai name unless inside a function call's callee
+ *      position (e.g., banned: `let f = greet`).
+ *
+ *  S8. Each ImportSpec name MUST match an ExportSpec name in the target file.
+ *
+ *  S9. Import VersionTag (if @hash form) MUST exist in the target file's
+ *      version history (.train/versions/...).
+ *
+ *  S10. Circular imports rejected: a -> b -> a triggers TypeChecker error.
+ *
+ *  S11. Identifier MUST NOT shadow a Keyword (lexer responsibility).
+ *
+ *  S12. Within a func/fai, parameter names MUST be unique.
+ *
+ *  S13. Inside fai body, `prompt` identifier refers to the (sole) prompt
+ *       parameter when there's exactly one prompt-typed parameter.
+ *       Multiple prompt params: must reference by parameter name.
+ *
+ *  S14. Return type compatibility: ReturnStmt's Expr type ⊆ declared FuncDecl
+ *       return type (or Unit if no "-> Type"). fai functions implicitly
+ *       return their output list — no explicit "return" inside fai body
+ *       unless body is non-empty (in which case body computes prompt,
+ *       not returns outputs).
+ *
+ *  S15. `let` declared variables MUST be assigned before use (no
+ *       uninitialized read).
+ *
+ *  S16. `for ... in expr`: expr type MUST be array<T>; loop variable has type T.
+ *
+ *  S17. EnumType variants MUST be unique within the enum declaration.
+ *
+ *  S18. ObjectType field names MUST be unique within the object.
+ *
+ *  S19. Annotation argument types MUST match expected (e.g. @timeout takes
+ *       int seconds; @adapter takes string name).
+ *
+ *  S20. Test-only: @mock fai DECL only valid in `*.test.tr` files.
+ * ============================================================ *)
+
+
+(* ============================================================
+ * OPEN ITEMS (decisions deferred to implementation phase)
+ * ============================================================ *
+ *
+ *  O1. Number literal syntax:
+ *      - Support hex (0x...) / octal (0o...) / binary (0b...) integers?
+ *      - Underscore separators (1_000_000)?
+ *      - Negative literal vs unary minus (`-3` is unary minus over `3`)
+ *      → MVP: decimal integer / float only; underscore sep optional add later.
+ *
+ *  O2. String interpolation in single-quote strings:
+ *      Currently grammar allows it in both. Recommend lexer ONLY allow
+ *      interpolation in double-quoted strings; single-quote for raw literals.
+ *      → Final decision in M1 implementation.
+ *
+ *  O3. Trailing commas:
+ *      Grammar allows in all lists (arglist, paramlist, importspec, etc).
+ *      → Confirmed: trailing commas always allowed (TS style).
+ *
+ *  O4. Annotation order:
+ *      Multiple DeclAnnotations on one decl — does order matter?
+ *      → Semantically no; lexically must precede decl. Stable iteration order
+ *      preserved for diagnostics.
+ *
+ *  O5. Block as expression:
+ *      Should `let x = { stmts; final_expr }` be allowed (Rust-style)?
+ *      → MVP: NO. Block is statement-only. Keeps grammar simpler.
+ *
+ *  O6. Pattern matching in let:
+ *      Currently object/array destructuring supported. Nested patterns?
+ *      `let { a: { b } } = ...` allowed?
+ *      → MVP: One level only. Nested introduced later if needed.
+ *
+ *  O7. Multiline string literal:
+ *      How to write a string with embedded newlines?
+ *      Options: (a) "\n" escape only; (b) triple-quote """...""" (Python/Swift);
+ *               (c) backtick ` ... ` (JS)
+ *      → MVP: (a) escape only. Add triple-quote later if needed.
+ *
+ *  O8. Type assertions / casts:
+ *      Runtime type assertion `x as int`?
+ *      → MVP: NO. Conversion via int(x) / float(x) builtins.
+ *
+ *  O9. Function default parameter values?
+ *      `func f(x: int = 0)`?
+ *      → MVP: NO. Caller must supply all args. Optional params can be modeled
+ *      as `int | null` once union types arrive — currently NOT in scope.
+ *
+ *  O10. Spread / rest operator?
+ *       `f(...args)`, `[...arr]`?
+ *       → MVP: NO. Reconsider if turning out to be common pattern.
+ * ============================================================ *)
+
+
+(* ============================================================
+ * EXAMPLES (sanity check the grammar)
+ * ============================================================ *
+ *
+ * Example 1: minimum viable hello.tr
+ * -----------------------------------
+ *   fai greet(name: string, prompt: prompt) -> message: string maxLen=200 { }
+ *
+ *   func main(name: string) -> string {
+ *     let r = greet(name, "用礼貌的方式问候 ${name}")
+ *     return r.message
+ *   }
+ *
+ *   export main
+ *
+ *
+ * Example 2: control flow + try-catch
+ * -----------------------------------
+ *   import { check } from "format"@v1.0.0
+ *
+ *   var passed: array<string> = []
+ *
+ *   func main(files: array<string>) -> int {
+ *     for file in files {
+ *       try {
+ *         let ok = check(file)
+ *         if (ok) {
+ *           push(passed, file)
+ *         } else {
+ *           continue
+ *         }
+ *       } catch ValidationError as e {
+ *         log.warn("skip ${file}: ${e.message}")
+ *       }
+ *     }
+ *     return len(passed)
+ *   }
+ *
+ *   export main
+ *
+ *
+ * Example 3: destructuring + fai multiple outputs
+ * -----------------------------------------------
+ *   fai analyze(code: string, prompt: prompt)
+ *     -> rating: int 0-10, notes: string maxLen=500 { }
+ *
+ *   func grade(code: string) -> string {
+ *     let { rating, notes } = analyze(code, "请评分并附注")
+ *     return rating >= 7 ? "pass" : notes
+ *   }
+ *
+ *   export grade
+ *
+ *
+ * Example 4: nested annotations
+ * -----------------------------
+ *   @runtime(adapter = "claude", maxLlmRetries = 5)
+ *
+ *   @cache
+ *   @timeout(900)
+ *   fai heavy_review(file: string, prompt: prompt) -> rating: int 0-10 { }
+ *
+ *   export heavy_review
+ * ============================================================ *)

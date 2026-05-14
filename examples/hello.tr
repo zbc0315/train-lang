@@ -1,0 +1,19 @@
+// hello.tr — the minimum viable train program
+//
+// Run (future, once CLI is built):
+//   train run hello.tr -- "World"
+//
+// Demonstrates:
+//   - fai function with a prompt-typed parameter
+//   - func with typed args and return type
+//   - let / function call / member access / return
+//   - export of the main entry
+
+fai greet(name: string, prompt: prompt) -> message: string maxLen=200 { }
+
+func main(name: string) -> string {
+  let r = greet(name, "请用礼貌的方式问候")
+  return r.message
+}
+
+export main

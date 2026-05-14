@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+*.log
+coverage/
+.vscode/
+.idea/
+*.local
+
+# ignore train runtime state when running examples
+.train/

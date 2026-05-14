@@ -1,0 +1,6 @@
+fai data() -> result: string { }
+func t() -> string {
+  let x = data().result
+  return x
+}
+export t

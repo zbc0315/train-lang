@@ -1,0 +1,2 @@
+fai analyze(x: int) -> rating: int 0-10, notes: string maxLen=500 { }
+export analyze

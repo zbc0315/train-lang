@@ -1,0 +1,4 @@
+func t() {
+  let x: int = 5
+}
+export t

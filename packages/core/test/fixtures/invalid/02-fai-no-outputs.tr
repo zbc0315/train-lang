@@ -1,0 +1,2 @@
+// fai requires at least one output after `->`
+fai f(x: int) -> { }

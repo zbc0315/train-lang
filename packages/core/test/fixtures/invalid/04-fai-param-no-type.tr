@@ -1,0 +1,2 @@
+// fai parameters MUST have explicit type annotation
+fai f(x) -> r: int { }

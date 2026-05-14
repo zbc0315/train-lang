@@ -1,0 +1,4 @@
+func add(x, y) -> int {
+  return 0
+}
+export add

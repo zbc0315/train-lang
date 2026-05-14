@@ -1,0 +1,2 @@
+fai write(topic: string) -> draft: string maxLen=2000 { }
+export write

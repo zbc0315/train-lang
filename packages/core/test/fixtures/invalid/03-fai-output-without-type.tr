@@ -1,0 +1,2 @@
+// each fai output must have `: Type`
+fai f(x: int) -> r { }

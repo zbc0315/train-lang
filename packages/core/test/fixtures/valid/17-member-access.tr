@@ -1,0 +1,6 @@
+func t() -> string {
+  let r = get()
+  return r.message
+}
+fai get() -> message: string { }
+export t

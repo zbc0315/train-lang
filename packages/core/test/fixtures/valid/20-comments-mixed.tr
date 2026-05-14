@@ -1,0 +1,11 @@
+// Top-level line comment.
+/* Block
+   comment
+   spanning lines */
+fai f(x: int) -> r: int { /* inline block */ }   // trailing line
+// gap
+func main() {
+  // body comment
+  return  // bare return
+}
+export main

@@ -1,0 +1,4 @@
+func t() {
+  return
+}
+export t

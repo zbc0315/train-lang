@@ -1,0 +1,6 @@
+func t() {
+  let x = 5
+  let y = "hello"
+  let z = true
+}
+export t

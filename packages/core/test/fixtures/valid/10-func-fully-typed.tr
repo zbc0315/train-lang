@@ -1,0 +1,4 @@
+func process(input: string, count: int) -> string {
+  return input
+}
+export process

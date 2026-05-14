@@ -1,0 +1,2 @@
+fai greet(name: string, criteria: string, prompt: prompt) -> message: string maxLen=200 { }
+export greet

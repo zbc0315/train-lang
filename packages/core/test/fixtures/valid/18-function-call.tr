@@ -1,0 +1,6 @@
+fai greet(prompt: prompt) -> msg: string { }
+func t() -> string {
+  let r = greet("hi")
+  return r.msg
+}
+export t

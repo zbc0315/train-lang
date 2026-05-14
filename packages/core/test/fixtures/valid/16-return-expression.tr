@@ -1,0 +1,4 @@
+func t() -> int {
+  return 42
+}
+export t

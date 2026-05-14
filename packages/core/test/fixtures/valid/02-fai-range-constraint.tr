@@ -1,0 +1,2 @@
+fai score(item: string) -> rating: int 0-10 { }
+export score

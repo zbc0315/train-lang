@@ -1,0 +1,3 @@
+// Canonical: `prompt` is both a valid identifier AND a leaf type name.
+fai f(prompt: prompt) -> result: string { }
+export f

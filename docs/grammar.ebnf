@@ -165,17 +165,20 @@ FaiOutput          = Identifier ":" TypeAnnot .
  *   any
  * ============================================================ *)
 
-TypeAnnot          = PromptType
+TypeAnnot          = LeafType
                    | EnumType
                    | ArrayType
-                   | ObjectType
-                   | ScalarType
-                   | "any" .
+                   | ObjectType .
 
-PromptType         = "prompt" .
+(* Leaf type names — see RESERVED IDENTIFIERS section in Part 11.
+ * These are lexed as ordinary identifiers and recognized as types
+ * only in type-annotation position. *)
+LeafType           = LeafTypeName [ TypeConstraint ] .
+LeafTypeName       = "int" | "float" | "bool" | "string" | "prompt" | "any" .
 
-ScalarType         = ScalarBase [ TypeConstraint ] .
-ScalarBase         = "int" | "float" | "bool" | "string" .
+(* Backward-compat alias: ScalarType is retained for documentation,
+ * but is equivalent to LeafType with the four numeric/bool/string names. *)
+ScalarType         = LeafType .
 
 TypeConstraint     = RangeConstraint
                    | NamedConstraint .
@@ -354,32 +357,71 @@ HexDigit           = Digit | "a".."f" | "A".."F" .
 
 
 (* ============================================================
- * PART 11 — RESERVED KEYWORDS
+ * PART 11 — RESERVED NAMES (two classes)
  * ============================================================ *
  *
- * Identifiers MUST NOT collide with this list.
- * Annotations like @runtime / @mock are NOT keywords — they are
- * prefixed identifiers in declaration position.
- * Built-in function names (ask_user / push / len / log / etc.)
- * are NOT keywords — they are pre-declared globals.
+ * Class 1: KEYWORDS — lexer-level keywords.
+ *   These are emitted as distinct token types by the lexer.
+ *   Identifiers MUST NOT collide with this list.
+ *
+ * Class 2: RESERVED IDENTIFIERS — leaf type names.
+ *   These are emitted as ordinary `Identifier` tokens by the lexer.
+ *   They are recognized as types ONLY in type-annotation position
+ *   (after `:` in a parameter / variable / output / let).
+ *   In all other positions they behave as regular identifiers.
+ *
+ *   Why this split? The canonical form `fai f(prompt: prompt)` uses
+ *   `prompt` simultaneously as a parameter NAME (identifier position)
+ *   and as a TYPE NAME (type position). Reserving `prompt` as a lexer
+ *   keyword would make this canonical form illegal — therefore leaf
+ *   type names are deferred to the type-checker for recognition.
+ *
+ *   Practical consequence: a user MAY name a variable `int` or `prompt`,
+ *   but the type-checker will warn / forbid such shadowing in scope
+ *   (see Semantic Constraint S22).
+ *
+ * NOT reserved (despite appearing in standard library):
+ *   - Annotations (@runtime / @adapter / @mock / @cache / @timeout /
+ *     @frozen): "@" + Identifier — recognized in declaration position.
+ *   - Built-in function names (ask_user / push / len / log / range /
+ *     int / float / string / bool / etc.): pre-declared globals,
+ *     NOT keywords. Note: this means `int(x)` as a value cast (calling
+ *     the built-in `int` function) is syntactically valid; the parser
+ *     does not distinguish it from `int` as a type. The type-checker
+ *     uses position to disambiguate.
  * ============================================================ *)
 
-Keyword            = (* module *)
+(* === Class 1: lexer-level KEYWORDS === *)
+Keyword            = (* module system *)
                      "import" | "from" | "as" | "export"
                    | (* binding *)
                      "const" | "var" | "let"
                    | (* function *)
                      "func" | "fai" | "return"
-                   | (* control *)
+                   | (* control flow *)
                      "if" | "else"
                    | "for" | "in" | "while"
                    | "break" | "continue"
                    | "try" | "catch"
                    | (* literals *)
                      "true" | "false" | "null"
-                   | (* types *)
-                     "int" | "float" | "bool" | "string" | "prompt"
-                   | "enum" | "array" | "object" | "any" .
+                   | (* structural type constructors *)
+                     "enum" | "array" | "object" .
+
+(* === Class 2: RESERVED IDENTIFIERS (leaf types) === *)
+ReservedIdentifier = "int" | "float" | "bool" | "string" | "prompt" | "any" .
+
+(* === Token order constraint at lexer level ===
+ *
+ * When one Keyword pattern is a prefix of another, the LONGER keyword
+ * MUST be declared first in the token list. Otherwise the lexer's
+ * static analysis (e.g. chevrotain) reports the longer one as
+ * unreachable. Current prefix conflicts to watch:
+ *   - "in" (control flow) is a prefix of NONE of the keywords above
+ *     after leaf types were moved out of the keyword class.
+ *     (Previously: "in" was a prefix of "int" — no longer an issue.)
+ *
+ * Adding new keywords in the future MUST check this invariant. *)
 
 
 (* ============================================================
@@ -484,6 +526,19 @@ Keyword            = (* module *)
  *       int seconds; @adapter takes string name).
  *
  *  S20. Test-only: @mock fai DECL only valid in `*.test.tr` files.
+ *
+ *  S21. Reserved identifier in type position: when an Identifier appears
+ *       in a type-annotation slot (after `:`), the type-checker MUST
+ *       recognize it as the corresponding leaf type if it is one of
+ *       { int, float, bool, string, prompt, any }. In any other position
+ *       it is a normal identifier (variable / parameter / function name).
+ *
+ *  S22. Shadowing of reserved type names: the type-checker SHOULD warn
+ *       when a binding name shadows a leaf type name in a scope where
+ *       that type is used, because it harms readability. Example:
+ *         let int = 5
+ *         var int_val: int = int   // confusing
+ *       Hard error optional; warning recommended.
  * ============================================================ *)
 
 

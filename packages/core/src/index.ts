@@ -30,12 +30,19 @@ export {
   TrainReturnSignal,
   TrainBreakSignal,
   TrainContinueSignal,
+  makeBuiltin,
+  isBuiltin,
+  newScope,
+  scopeLookup,
+  scopeAssign,
+  isFunctionValue,
   type TrainErrorCodeKey,
   type TrainErrorCodeValue,
   type Value,
   type FunctionValue,
   type BuiltinFunction,
   type RuntimeContext,
+  type Scope,
 } from './runtime.js'
 
 export { defaultBuiltinBindings, formatValue } from './builtins.js'

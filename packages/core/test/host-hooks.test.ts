@@ -41,6 +41,59 @@ describe('writeProtocolHint host hook', () => {
   })
 })
 
+describe('async builtin support', () => {
+  test('builtin returning Promise<Value> is awaited', async () => {
+    const { makeBuiltin } = await import('../src/runtime.js')
+    const asyncBuiltin = makeBuiltin('asyncEcho', async (args) => {
+      await new Promise((r) => setTimeout(r, 10))
+      return (args[0] as number) * 2
+    })
+    const src = `
+func main() -> int {
+  return asyncEcho(21)
+}
+export main
+`
+    const r = await runSource(src, {
+      extraBuiltins: new Map([['asyncEcho', asyncBuiltin as any]]),
+    })
+    expect(r.ok).toBe(true)
+    expect(r.value).toBe(42)
+  })
+
+  test('sync builtin still works (backward compat)', async () => {
+    const { makeBuiltin } = await import('../src/runtime.js')
+    const syncBuiltin = makeBuiltin('syncEcho', (args) => (args[0] as number) + 1)
+    const src = `
+func main() -> int {
+  return syncEcho(7)
+}
+export main
+`
+    const r = await runSource(src, {
+      extraBuiltins: new Map([['syncEcho', syncBuiltin as any]]),
+    })
+    expect(r.ok).toBe(true)
+    expect(r.value).toBe(8)
+  })
+
+  test('async builtin that throws propagates', async () => {
+    const { makeBuiltin } = await import('../src/runtime.js')
+    const throwingBuiltin = makeBuiltin('asyncBoom', async () => {
+      throw new Error('boom from builtin')
+    })
+    const src = `
+func main() -> int { return asyncBoom() }
+export main
+`
+    await expect(
+      runSource(src, {
+        extraBuiltins: new Map([['asyncBoom', throwingBuiltin as any]]),
+      }),
+    ).rejects.toThrow(/boom from builtin/)
+  })
+})
+
 describe('AbortSignal host hook', () => {
   test('pre-aborted signal: fai call refuses to dispatch', async () => {
     const adapter = createReactiveMockAdapter(() => ({

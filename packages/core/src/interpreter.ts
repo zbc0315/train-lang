@@ -346,7 +346,9 @@ export class Interpreter {
     }
     if (isBuiltin(callee as unknown as Value)) {
       const b = callee as unknown as BuiltinFunction
-      return b.call(args)
+      // Builtins may be sync or async (Value | Promise<Value>); awaiting
+      // a non-Promise is a no-op so this is safe for both cases.
+      return await b.call(args)
     }
     throw new TrainException(
       'RuntimeError',

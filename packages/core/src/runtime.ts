@@ -102,12 +102,21 @@ export interface RuntimeContext {
 export interface BuiltinFunction {
   readonly __kind: 'builtin'
   readonly name: string
-  call(args: Value[]): Value
+  /**
+   * Builtin call signature. Built-ins MAY return a Promise<Value> to
+   * support async operations (host I/O, ask_user-style user prompts,
+   * shell-out, etc.). The interpreter awaits the return value before
+   * proceeding.
+   *
+   * Synchronous builtins simply return Value directly — no Promise
+   * wrapping required.
+   */
+  call(args: Value[]): Value | Promise<Value>
 }
 
 export function makeBuiltin(
   name: string,
-  call: (args: Value[]) => Value,
+  call: (args: Value[]) => Value | Promise<Value>,
 ): BuiltinFunction {
   return { __kind: 'builtin', name, call }
 }

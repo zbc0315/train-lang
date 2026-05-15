@@ -195,7 +195,7 @@ export class TrainParser extends CstParser {
     this.CONSUME(t.Const)
     this.CONSUME(t.Identifier)
     this.CONSUME(t.Colon)
-    this.SUBRULE(this.typeAnnot)
+    this.SUBRULE(this.declTypeAnnot)
     this.CONSUME(t.Equals)
     this.SUBRULE(this.expr)
   })
@@ -204,7 +204,7 @@ export class TrainParser extends CstParser {
     this.CONSUME(t.Var)
     this.CONSUME(t.Identifier)
     this.CONSUME(t.Colon)
-    this.SUBRULE(this.typeAnnot)
+    this.SUBRULE(this.declTypeAnnot)
     this.OPTION(() => {
       this.CONSUME(t.Equals)
       this.SUBRULE(this.expr)
@@ -332,6 +332,32 @@ export class TrainParser extends CstParser {
       { ALT: () => this.SUBRULE(this.objectType) },
       { ALT: () => this.SUBRULE(this.scalarType) }, // catch-all leaf type
     ])
+  })
+
+  // Variant of typeAnnot used by let/var/const declarations. These
+  // forbid trailing named constraints (`int 0-10`, `maxLen=5`, etc.)
+  // because the following statement (`x = 5`) would otherwise be
+  // silently absorbed as a NamedConstraint, swallowing the assignment.
+  // Constraints belong on fai outputs / func params where they're
+  // contract-relevant, not on local bindings.
+  private declTypeAnnot = this.RULE('declTypeAnnot', () => {
+    this.OR([
+      { ALT: () => this.SUBRULE(this.enumType) },
+      { ALT: () => this.SUBRULE(this.declArrayType) },
+      { ALT: () => this.SUBRULE(this.objectType) },
+      { ALT: () => this.SUBRULE(this.declScalarType) },
+    ])
+  })
+
+  private declScalarType = this.RULE('declScalarType', () => {
+    this.CONSUME(t.Identifier)
+  })
+
+  private declArrayType = this.RULE('declArrayType', () => {
+    this.CONSUME(t.KwArray)
+    this.CONSUME(t.LAngle)
+    this.SUBRULE(this.typeAnnot)
+    this.CONSUME(t.RAngle)
   })
 
   private scalarType = this.RULE('scalarType', () => {
@@ -505,7 +531,7 @@ export class TrainParser extends CstParser {
     this.SUBRULE(this.letTarget)
     this.OPTION(() => {
       this.CONSUME(t.Colon)
-      this.SUBRULE(this.typeAnnot)
+      this.SUBRULE(this.declTypeAnnot)
     })
     this.OPTION2(() => {
       this.CONSUME(t.Equals)

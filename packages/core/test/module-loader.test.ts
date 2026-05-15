@@ -387,3 +387,44 @@ describe('error codes are wired through', () => {
     expect(TrainErrorCode.ModuleNotFound).toBe('E0502')
   })
 })
+
+// ─── Regression: bugs #1 (silent shadow) and #4 (dup import) ────────────
+
+describe('module-loader: name collision regressions', () => {
+  test('#1 import + local function with same name is rejected', async () => {
+    // Previously the imported symbol silently overwrote the local
+    // definition (or vice versa, depending on declaration order), and
+    // calls to `main` returned whichever the second-set won. Now both
+    // setting paths refuse to clobber an existing binding.
+    await writeFile('a.tr', `func main() -> string { return "from a" }\nexport main\n`)
+    const entry = await writeFile(
+      'main.tr',
+      `import { main } from "./a"\nfunc main() -> string { return "from b" }\nexport main\n`,
+    )
+    const r = await runFile(entry, {})
+    expect(r.ok).toBe(false)
+    expect(r.error?.message).toMatch(/conflicts with existing|duplicate symbol/)
+  })
+
+  test('#4 duplicate import of the same symbol is rejected', async () => {
+    await writeFile('a.tr', `func foo() -> int { return 1 }\nexport foo\n`)
+    const entry = await writeFile(
+      'main.tr',
+      `import { foo } from "./a"\nimport { foo } from "./a"\nfunc main() -> int { return foo() }\nexport main\n`,
+    )
+    const r = await runFile(entry, {})
+    expect(r.ok).toBe(false)
+    expect(r.error?.message).toMatch(/conflicts with existing/)
+  })
+
+  test('import with `as` alias still works (no collision)', async () => {
+    await writeFile('a.tr', `func main() -> string { return "from a" }\nexport main\n`)
+    const entry = await writeFile(
+      'main.tr',
+      `import { main as aMain } from "./a"\nfunc main() -> string { return aMain() + " + from b" }\nexport main\n`,
+    )
+    const r = await runFile(entry, {})
+    expect(r.ok).toBe(true)
+    expect(r.value).toBe('from a + from b')
+  })
+})

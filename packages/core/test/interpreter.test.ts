@@ -504,3 +504,93 @@ describe('interpreter: scoping', () => {
     ).toBe(7)
   })
 })
+
+// ─── Regression: audit findings (8 bugs surfaced by ccweb integration) ──
+//
+// Each test below corresponds to a specific previously-undetected bug.
+// Don't remove without ensuring the bug is genuinely impossible.
+
+describe('regression: audit findings', () => {
+  it('#5 missing object key returns null (was RuntimeError)', async () => {
+    expect(
+      await ok(
+        `func main() -> any { let o = { x: 1 }\nreturn o.y } export main`,
+      ),
+    ).toBe(null)
+  })
+
+  it('#6 let typed no-init then reassign reads back the new value', async () => {
+    // Previously parser swallowed `x = 5` as a NamedConstraint on the
+    // `int` type annotation; the assignment never executed.
+    expect(
+      await ok(
+        `func main() -> int { let x: int\nx = 5\nreturn x } export main`,
+      ),
+    ).toBe(5)
+  })
+
+  it('#7 concat on arrays produces array (was string stringify-join)', async () => {
+    const r = await ok(
+      `func main() -> array<int> { return concat([1,2], [3,4]) } export main`,
+    )
+    expect(r).toEqual([1, 2, 3, 4])
+  })
+
+  it('#7b concat on strings still produces string (backward compat)', async () => {
+    expect(
+      await ok(`func main() -> string { return concat("a", "b") } export main`),
+    ).toBe('ab')
+  })
+
+  it('#2 duplicate local function rejected (was silent second-wins)', async () => {
+    const err = await fail(
+      `func foo() -> int { return 1 }\nfunc foo() -> int { return 2 }\nfunc main() -> int { return foo() } export main`,
+    )
+    expect(err?.message).toMatch(/duplicate symbol 'foo'/)
+  })
+
+  it('#3 func + const same name rejected (was silent)', async () => {
+    const err = await fail(
+      `const foo: int = 1\nfunc foo() -> int { return 2 }\nfunc main() -> int { return foo } export main`,
+    )
+    expect(err?.message).toMatch(/duplicate symbol 'foo'/)
+  })
+
+  it('#8 catch with lowercase identifier treats as catch-all + binds name', async () => {
+    // Previously `catch e { ... }` parsed but never fired because
+    // train tried to match an error of type literally named 'e'.
+    expect(
+      await ok(`
+        func main() -> string {
+          try { return string(5 / 0) }
+          catch e { return e.message }
+        }
+        export main
+      `),
+    ).toMatch(/division by zero/)
+  })
+
+  it('#8b typed catch still works (catch RuntimeError as e)', async () => {
+    expect(
+      await ok(`
+        func main() -> int {
+          try { return 5 / 0 }
+          catch RuntimeError as err { return -1 }
+        }
+        export main
+      `),
+    ).toBe(-1)
+  })
+
+  it('typed-let with constraint is no longer parsed (would conflict with assignment)', async () => {
+    // After the parser fix, `let x: int 0-10` no longer accepts a
+    // trailing typeConstraint — the constraint syntax is reserved for
+    // fai outputs / func params. This is the surface change that
+    // unblocks #6.
+    const r = await run(
+      `func main() -> int { let x: int 0-10 = 5\nreturn x } export main`,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.parseErrors.length).toBeGreaterThan(0)
+  })
+})

@@ -434,7 +434,7 @@ class TrainAstBuilder extends BaseVisitor {
   constDecl(ctx: any): ast.ConstDecl {
     const constTok = (ctx.Const as IToken[])[0]!
     const id = (ctx.Identifier as IToken[])[0]!
-    const type = this.visit(ctx.typeAnnot[0]) as ast.TypeAnnot
+    const type = this.visit(ctx.declTypeAnnot[0]) as ast.TypeAnnot
     const value = this.visit(ctx.expr[0]) as ast.Expr
     return {
       kind: 'ConstDecl',
@@ -448,7 +448,7 @@ class TrainAstBuilder extends BaseVisitor {
   varDecl(ctx: any): ast.VarDecl {
     const varTok = (ctx.Var as IToken[])[0]!
     const id = (ctx.Identifier as IToken[])[0]!
-    const type = this.visit(ctx.typeAnnot[0]) as ast.TypeAnnot
+    const type = this.visit(ctx.declTypeAnnot[0]) as ast.TypeAnnot
     const init = ctx.expr ? (this.visit(ctx.expr[0]) as ast.Expr) : null
     const endRange = init?.range ?? type.range
     return {
@@ -610,6 +610,39 @@ class TrainAstBuilder extends BaseVisitor {
     return this.visit(ctx.scalarType[0])
   }
 
+  // Variant for let/var/const decl types: same AST shape as typeAnnot
+  // but scalar/array sub-rules don't allow trailing named constraints
+  // (those would silently swallow the next statement). Constraints
+  // belong on fai outputs / func params, not local bindings.
+  declTypeAnnot(ctx: any): ast.TypeAnnot {
+    if (ctx.enumType) return this.visit(ctx.enumType[0])
+    if (ctx.declArrayType) return this.visit(ctx.declArrayType[0])
+    if (ctx.objectType) return this.visit(ctx.objectType[0])
+    return this.visit(ctx.declScalarType[0])
+  }
+
+  declScalarType(ctx: any): ast.ScalarType {
+    const id = (ctx.Identifier as IToken[])[0]!
+    return {
+      kind: 'ScalarType',
+      name: id.image,
+      constraint: null,
+      range: tokenRange(id),
+    }
+  }
+
+  declArrayType(ctx: any): ast.ArrayType {
+    const arrTok = (ctx.KwArray as IToken[])[0]!
+    const element = this.visit(ctx.typeAnnot[0]) as ast.TypeAnnot
+    const rangle = (ctx.RAngle as IToken[])[0]!
+    return {
+      kind: 'ArrayType',
+      element,
+      constraint: null,
+      range: spanFromTokenToRange(arrTok, tokenRange(rangle)),
+    }
+  }
+
   scalarType(ctx: any): ast.ScalarType {
     const id = (ctx.Identifier as IToken[])[0]!
     const constraint = ctx.typeConstraint
@@ -753,8 +786,8 @@ class TrainAstBuilder extends BaseVisitor {
   letDecl(ctx: any): ast.LetDecl {
     const letTok = (ctx.Let as IToken[])[0]!
     const target = this.visit(ctx.letTarget[0]) as ast.LetTarget
-    const type = ctx.typeAnnot
-      ? (this.visit(ctx.typeAnnot[0]) as ast.TypeAnnot)
+    const type = ctx.declTypeAnnot
+      ? (this.visit(ctx.declTypeAnnot[0]) as ast.TypeAnnot)
       : null
     const init = ctx.expr ? (this.visit(ctx.expr[0]) as ast.Expr) : null
     const endRange = init?.range ?? type?.range ?? target.range

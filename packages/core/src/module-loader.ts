@@ -184,6 +184,23 @@ export function applyImport(
       )
     }
     const localName = spec.alias ?? spec.name
+    // Refuse to silently shadow an existing symbol — catches both
+    // `import { foo } / func foo` and duplicate `import { foo }` twice.
+    // Use alias if present (`as x`), since that's the local name being
+    // bound. Without this check the second `set` simply overwrote the
+    // first and no warning fired.
+    let conflict: string | null = null
+    if (importerCtx.functions.has(localName)) conflict = 'function'
+    else if (importerCtx.constants.has(localName)) conflict = 'const'
+    else if (importerCtx.globals.has(localName)) conflict = 'var'
+    if (conflict !== null) {
+      throw new TrainException(
+        'ModuleError',
+        `import '${localName}' from "${imp.source}" conflicts with existing ${conflict} of the same name; use \`as\` to rename`,
+        spec.range,
+        TrainErrorCode.ImportSymbolMissing,
+      )
+    }
     const value = child.exports.get(spec.name)!
     if (isFunctionValue(value)) {
       // Re-bind imported function into importer's functions map so calls

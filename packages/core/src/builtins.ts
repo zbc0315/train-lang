@@ -226,10 +226,20 @@ const builtinSpecs: Array<[string, (args: Value[]) => Value]> = [
     },
   ],
 
-  // ─── String ──────────────────────────────────────────────────────────
+  // ─── String / Array ────────────────────────────────────────────────
   [
     'concat',
     (args) => {
+      // Polymorphic: if ALL args are arrays, return a flat-concatenated
+      // array. Otherwise stringify all args and concatenate as a string.
+      // Mixed array/non-array is treated as the string path (each array
+      // gets formatValue'd, which is rarely what callers want, but is
+      // the only safe interpretation when types disagree).
+      if (args.length > 0 && args.every((a) => Array.isArray(a))) {
+        const out: Value[] = []
+        for (const a of args) for (const el of a as Value[]) out.push(el)
+        return out
+      }
       return args.map(formatValue).join('')
     },
   ],

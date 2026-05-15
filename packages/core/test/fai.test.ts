@@ -18,8 +18,8 @@ import {
   success,
   adapterError,
   timeout as timeoutResult,
-} from '@train-lang/adapter-mock'
-import type { FaiCall } from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-mock'
+import type { FaiCall } from '@tom2012/train-adapter-spec'
 
 // ─── Basic dispatch ──────────────────────────────────────────────────
 

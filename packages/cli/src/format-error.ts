@@ -1,4 +1,4 @@
-import type { TrainException } from '@train-lang/core'
+import type { TrainException } from '@tom2012/train-core'
 
 export interface FormattedError {
   exitCode: 1 | 2

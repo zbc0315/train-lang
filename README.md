@@ -19,9 +19,9 @@ Formal grammar — see `docs/grammar.ebnf`.
 
 ```
 packages/
-  core/           @train-lang/core         language runtime
-  adapter-spec/   @train-lang/adapter-spec adapter protocol (planned)
-  cli/            @train-lang/cli          train CLI (planned)
+  core/           @tom2012/train-core         language runtime
+  adapter-spec/   @tom2012/train-adapter-spec adapter protocol (planned)
+  cli/            @tom2012/train-cli          train CLI (planned)
   adapter-*/      LLM adapters             OpenAI / Anthropic / Ollama / ... (planned)
 docs/
   grammar.ebnf    formal grammar
@@ -45,7 +45,7 @@ export main
 Future:
 
 ```bash
-npm install -g @train-lang/cli @train-lang/adapter-openai
+npm install -g @tom2012/train-cli @tom2012/train-adapter-openai
 train config set adapter openai
 train config set openai.api_key sk-...
 train run hello.tr -- "World"

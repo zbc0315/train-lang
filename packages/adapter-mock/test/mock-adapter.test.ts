@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import type { FaiCall, FaiResult } from '@train-lang/adapter-spec'
+import type { FaiCall, FaiResult } from '@tom2012/train-adapter-spec'
 import {
   createMockAdapter,
   createReactiveMockAdapter,

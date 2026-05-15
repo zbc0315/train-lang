@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import type { FaiCall, TrainTypeDescriptor } from '@train-lang/adapter-spec'
+import type { FaiCall, TrainTypeDescriptor } from '@tom2012/train-adapter-spec'
 import {
   createGenerativeFakeAdapter,
   createChaosAdapter,

@@ -1,6 +1,6 @@
 {
-  "name": "@train-lang/adapter-spec",
-  "version": "0.0.0",
+  "name": "@tom2012/train-adapter-spec",
+  "version": "0.1.0",
   "description": "train language LLM adapter protocol — type definitions only, zero runtime dependencies",
   "license": "MIT",
   "type": "module",

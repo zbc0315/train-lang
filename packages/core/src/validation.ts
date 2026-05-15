@@ -16,7 +16,7 @@ import { describeType, typeToDescriptor } from './type-descriptor.js'
 import type {
   TrainTypeDescriptor,
   ValidationErrorItem,
-} from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-spec'
 import type { Value } from './runtime.js'
 
 export type ValidateValueResult =

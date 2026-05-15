@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { runSource } from '../src/index.js'
-import { createReactiveMockAdapter } from '@train-lang/adapter-mock'
+import { createReactiveMockAdapter } from '@tom2012/train-adapter-mock'
 
 const SRC = `
 fai foo(x: int, prompt: prompt) -> y: int { }

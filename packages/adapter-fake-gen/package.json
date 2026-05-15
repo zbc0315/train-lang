@@ -1,6 +1,6 @@
 {
-  "name": "@train-lang/adapter-fake-gen",
-  "version": "0.0.0",
+  "name": "@tom2012/train-adapter-fake-gen",
+  "version": "0.1.0",
   "description": "Generative fake LLM adapter — deterministic data with fault injection",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@train-lang/adapter-spec": "workspace:*"
+    "@tom2012/train-adapter-spec": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

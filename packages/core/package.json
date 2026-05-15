@@ -1,6 +1,6 @@
 {
-  "name": "@train-lang/core",
-  "version": "0.0.0",
+  "name": "@tom2012/train-core",
+  "version": "0.1.0",
   "description": "train language core — lexer, parser, type checker, interpreter",
   "license": "MIT",
   "type": "module",
@@ -40,12 +40,12 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@train-lang/adapter-spec": "workspace:*",
+    "@tom2012/train-adapter-spec": "workspace:*",
     "chevrotain": "^11.0.3"
   },
   "devDependencies": {
-    "@train-lang/adapter-mock": "workspace:*",
-    "@train-lang/adapter-fake-gen": "workspace:*",
+    "@tom2012/train-adapter-mock": "workspace:*",
+    "@tom2012/train-adapter-fake-gen": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

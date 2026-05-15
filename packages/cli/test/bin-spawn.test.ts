@@ -12,7 +12,7 @@ describe('train bin.js (spawn)', () => {
   beforeAll(() => {
     if (!existsSync(BIN)) {
       throw new Error(
-        `bin not built. Run \`pnpm --filter @train-lang/cli build\` first. Expected: ${BIN}`,
+        `bin not built. Run \`pnpm --filter @tom2012/train-cli build\` first. Expected: ${BIN}`,
       )
     }
   })

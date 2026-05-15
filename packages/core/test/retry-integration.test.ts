@@ -3,7 +3,7 @@ import { runSource } from '../src/index.js'
 import {
   createGenerativeFakeAdapter,
   createChaosAdapter,
-} from '@train-lang/adapter-fake-gen'
+} from '@tom2012/train-adapter-fake-gen'
 
 /**
  * Integration: fake-gen Layer 3 × core retry-with-feedback loop.

@@ -27,7 +27,7 @@ import type {
   AdapterCapabilities,
   FaiInputSpec,
   FaiOutputSpec,
-} from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-spec'
 import { describeType, isPromptType, typeToDescriptor } from './type-descriptor.js'
 import { formatValue } from './builtins.js'
 

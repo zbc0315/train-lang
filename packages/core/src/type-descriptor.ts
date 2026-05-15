@@ -11,7 +11,7 @@ import type * as ast from './ast.js'
 import type {
   TrainTypeDescriptor,
   TypeConstraintDescriptor,
-} from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-spec'
 
 export function typeToDescriptor(t: ast.TypeAnnot): TrainTypeDescriptor {
   switch (t.kind) {

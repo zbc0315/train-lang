@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
-import { runSource, TrainException, formatValue } from '@train-lang/core'
-import type { Value } from '@train-lang/core'
-import type { LLMAdapter } from '@train-lang/adapter-spec'
-import { createMockAdapter, type ScriptEntry } from '@train-lang/adapter-mock'
+import { runSource, TrainException, formatValue } from '@tom2012/train-core'
+import type { Value } from '@tom2012/train-core'
+import type { LLMAdapter } from '@tom2012/train-adapter-spec'
+import { createMockAdapter, type ScriptEntry } from '@tom2012/train-adapter-mock'
 import { parseArgv } from './argv.js'
 import {
   formatLexErrors,
@@ -233,7 +233,7 @@ async function cmdCheck(args: ReturnType<typeof parseArgv>, io: CliIO): Promise<
   }
 
   // We don't execute; just parse + build AST and report any errors.
-  const { parseToAst } = await import('@train-lang/core')
+  const { parseToAst } = await import('@tom2012/train-core')
   const r = parseToAst(source)
   if (r.lexErrors.length > 0) {
     const f = formatLexErrors(r.lexErrors, file, source)

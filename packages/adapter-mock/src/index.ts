@@ -1,5 +1,5 @@
 /**
- * @train-lang/adapter-mock — deterministic LLM adapter for testing.
+ * @tom2012/train-adapter-mock — deterministic LLM adapter for testing.
  *
  * No HTTP, no subprocess, no LLM. Used in two flavors:
  *
@@ -21,7 +21,7 @@ import type {
   FaiCall,
   FaiResult,
   AdapterCapabilities,
-} from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-spec'
 
 export interface ScriptEntry {
   fn?: string // optional filter by fai name (if absent, matches any)

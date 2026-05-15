@@ -36,7 +36,7 @@ import {
   isBuiltin,
 } from './runtime.js'
 import { defaultBuiltinBindings, formatValue } from './builtins.js'
-import type { LLMAdapter, FaiCall } from '@train-lang/adapter-spec'
+import type { LLMAdapter, FaiCall } from '@tom2012/train-adapter-spec'
 import { composePrompt } from './prompt-composer.js'
 import { composeRetryFeedback, validateOutputs } from './validation.js'
 

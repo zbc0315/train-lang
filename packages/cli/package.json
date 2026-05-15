@@ -1,6 +1,6 @@
 {
-  "name": "@train-lang/cli",
-  "version": "0.0.0",
+  "name": "@tom2012/train-cli",
+  "version": "0.1.0",
   "description": "train language CLI — run/check/version/help",
   "license": "MIT",
   "type": "module",
@@ -21,9 +21,9 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@train-lang/core": "workspace:*",
-    "@train-lang/adapter-spec": "workspace:*",
-    "@train-lang/adapter-mock": "workspace:*"
+    "@tom2012/train-core": "workspace:*",
+    "@tom2012/train-adapter-spec": "workspace:*",
+    "@tom2012/train-adapter-mock": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

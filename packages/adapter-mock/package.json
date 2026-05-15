@@ -1,6 +1,6 @@
 {
-  "name": "@train-lang/adapter-mock",
-  "version": "0.0.0",
+  "name": "@tom2012/train-adapter-mock",
+  "version": "0.1.0",
   "description": "Mock LLM adapter for train — testing without an actual LLM",
   "license": "MIT",
   "type": "module",
@@ -23,7 +23,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@train-lang/adapter-spec": "workspace:*"
+    "@tom2012/train-adapter-spec": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

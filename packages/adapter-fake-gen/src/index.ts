@@ -1,5 +1,5 @@
 /**
- * @train-lang/adapter-fake-gen — Generative + Chaos fake LLM adapters.
+ * @tom2012/train-adapter-fake-gen — Generative + Chaos fake LLM adapters.
  *
  * Layer 3 (Generative) and Layer 4 (Chaos) of the 5-layer fake LLM
  * stack documented in `工作流DSL测试方案.md` §6.
@@ -21,7 +21,7 @@ import type {
   FaiResult,
   TrainTypeDescriptor,
   AdapterCapabilities,
-} from '@train-lang/adapter-spec'
+} from '@tom2012/train-adapter-spec'
 
 // ─── Deterministic RNG ────────────────────────────────────────────────
 

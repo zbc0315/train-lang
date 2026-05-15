@@ -1,5 +1,5 @@
 /**
- * @train-lang/core — public API
+ * @tom2012/train-core — public API
  *
  * train language runtime: lexer, parser, type checker (planned), interpreter (planned).
  *
